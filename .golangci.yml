@@ -1,0 +1,61 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - revive
+    - misspell
+    - gosec
+    - bodyclose
+    - errname
+    - errorlint
+    - exhaustive
+    - copyloopvar
+    - noctx
+    - unparam
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - "checkPrivateReceivers"
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: var-naming
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - hugeParam
+    gosec:
+      excludes:
+        - G101
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    paths:
+      - helm
+      - certs
+      - examples
+      - tests
+      - diameterbench
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,30 @@
+{{- if .Values.server.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "godiam.server.fullname" . }}
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.server.selectorLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: diameter
+      port: {{ .Values.server.port }}
+      targetPort: diameter
+      protocol: TCP
+    {{- if has "sctp" .Values.server.transport }}
+    - name: diameter-sctp
+      port: {{ .Values.server.port }}
+      targetPort: diameter-sctp
+      protocol: SCTP
+    {{- end }}
+    {{- if .Values.server.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.server.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "godiam.server.selectorLabels" . | nindent 4 }}
+{{- end }}

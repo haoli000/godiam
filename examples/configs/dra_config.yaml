@@ -1,0 +1,100 @@
+# godiam configuration file with rt_rewrite for DRA testing
+# This configuration demonstrates AVP rewriting capabilities
+
+# Diameter Identity (must be a valid FQDN)
+identity: "dra.example.com"
+
+# Diameter Realm
+realm: "example.com"
+
+# Listen configuration
+listen:
+  port: 3868
+  enable_tcp: true
+  enable_sctp: false
+
+# TLS configuration (optional)
+tls:
+  enabled: false
+
+# Local node configuration
+local:
+  vendor_id: 0
+  product_name: "godiam-dra"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+# Peer configuration - upstream servers
+peers:
+  - identity: "upstream1.example.com"
+    realm: "example.com"
+    addresses:
+      - "192.168.1.100"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+  - identity: "upstream2.example.com"
+    realm: "example.com"
+    addresses:
+      - "192.168.1.101"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+# Supported applications
+applications:
+  - id: 4
+    type: auth
+    # Credit-Control Application
+  - id: 3
+    type: acct
+    # Base Accounting Application
+  - id: 16777238
+    type: auth
+    # 3GPP Gx Application
+
+# Extensions
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "app_cc"
+  - name: "app_acct"
+  - name: "app_cx"
+  - name: "app_gx"
+  - name: "app_s6a"
+  - name: "app_sip"
+  
+  # rt_rewrite - AVP rewriting for DRA scenarios
+  - name: "rt_rewrite"
+    config:
+      rules:
+        # Example 1: Protocol translation
+        # Map User-Name to MSISDN (common in mobile networks)
+        - map:
+            source: "User-Name"
+            destination: "MSISDN"
+
+        # Example 2: Message enrichment for routing
+        # Add routing information via Proxy-Info
+        - map:
+            source: "Session-Id"
+            destination: "Proxy-Info:Session-Id"
+        - map:
+            source: "Origin-Realm"
+            destination: "Proxy-Info:Origin-Realm"
+
+        # Example 3: Privacy filtering
+        # Remove sensitive AVPs that shouldn't be forwarded
+        - drop: "User-Password"
+        - drop: "CHAP-Password"
+
+        # Example 4: 3GPP specific mapping
+        # Map between different 3GPP AVP versions
+        - map:
+            source: "Subscription-Data"
+            destination: "Requested-Subscription-Data"
+
+  - name: "dbg_monitor"
+    config:
+      port: 9000

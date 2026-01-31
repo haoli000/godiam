@@ -1,0 +1,51 @@
+# godiam Gateway configuration for rt_ignore_dh test (right side)
+identity: "gw.backend.realm"
+realm: "backend.realm"
+
+listen:
+  port: 3869
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-gw"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+# Known peers so inbound acceptance works
+peers:
+  - identity: "peer11.access.realm"
+    realm: "access.realm"
+    addresses:
+      - "127.0.0.11"
+    port: 3870
+    connect_on_start: false
+    persistent: true
+  - identity: "server.backend.realm"
+    realm: "backend.realm"
+    addresses:
+      - "127.0.0.22"
+    port: 3872
+    connect_on_start: false
+    persistent: true
+
+# Relaying enabled: route to backend.realm realm
+routing:
+  relay_enabled: true
+  realm_routes:
+    "backend.realm":
+      - "server.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+  - id: 3
+    type: acct
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "rt_ignore_dh"

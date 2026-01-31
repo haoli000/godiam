@@ -1,0 +1,34 @@
+# Backend peer 1 - handles requests
+identity: "server1.backend.realm"
+realm: "backend.realm"
+
+listen:
+  port: 3871
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-server1"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers:
+  - identity: "gw.test.realm"
+    realm: "test.realm"
+    addresses:
+      - "127.0.0.10"
+    port: 3869
+    connect_on_start: true
+    persistent: true
+
+applications:
+  - id: 4
+    type: auth
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "test_app"

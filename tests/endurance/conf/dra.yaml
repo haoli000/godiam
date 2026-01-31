@@ -1,0 +1,69 @@
+# DRA (Diameter Routing Agent) for endurance testing
+# Relays traffic from diameterbench to backend servers
+# Loaded with production-like extension stack
+identity: "dra.test.realm"
+realm: "test.realm"
+
+listen:
+  port: 3869
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dra-endurance"
+  firmware_revision: 1
+  watchdog_interval: 10s
+  connect_timeout: 5s
+  request_timeout: 10s
+
+peers_policy:
+  allow_unknown: true
+
+peers:
+  - identity: "server1.backend.realm"
+    realm: "backend.realm"
+    addresses:
+      - "127.0.0.1"
+    port: 3870
+    connect_on_start: true
+    persistent: true
+    reconnect_interval: 3s
+  - identity: "server2.backend.realm"
+    realm: "backend.realm"
+    addresses:
+      - "127.0.0.1"
+    port: 3871
+    connect_on_start: true
+    persistent: true
+    reconnect_interval: 3s
+
+routing:
+  relay_enabled: true
+  default_realm: "backend.realm"
+  realm_routes:
+    "backend.realm":
+      - "server1.backend.realm"
+      - "server2.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  # Monitoring
+  - name: "prom_metrics"
+    config:
+      port: 9090
+  - name: "fifo_stats"
+  - name: "dbg_msg_timings"
+
+  # Routing resilience
+  - name: "rt_load_balance"
+  - name: "rt_busypeers"
+    config:
+      threshold: 50
+
+  # Message enforcement
+  - name: "rt_deny_by_size"
+    config:
+      max_size: 65536

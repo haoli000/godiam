@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "godiam.dra.fullname" . }}
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.dra.selectorLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: diameter
+      port: {{ .Values.dra.port }}
+      targetPort: diameter
+      protocol: TCP
+    {{- if has "sctp" .Values.dra.transport }}
+    - name: diameter-sctp
+      port: {{ .Values.dra.port }}
+      targetPort: diameter-sctp
+      protocol: SCTP
+    {{- end }}
+    {{- if .Values.dra.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.dra.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "godiam.dra.selectorLabels" . | nindent 4 }}

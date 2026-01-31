@@ -1,0 +1,6 @@
+# .dockerignore for integration test
+.git
+.gitignore
+*.md
+tests/*/
+!tests/dra_integration/

@@ -1,0 +1,110 @@
+# godiam rt_rewrite Extension Configuration
+# This extension rewrites AVPs in Diameter messages for DRA (Diameter Routing Agent) scenarios
+#
+# It supports two types of rules:
+#   MAP: Copy AVP data from source to destination
+#   DROP: Remove AVPs from messages
+#
+# Configuration is in YAML format under the extensions section of diameter.yaml
+
+# Example configuration for DRA use cases:
+#
+# extensions:
+#   - name: "rt_rewrite"
+#     config:
+#       rules:
+#         # MAP Rule 1: Simple AVP mapping
+#         # Copies the value from Origin-Host to Destination-Host
+#         - map:
+#             source: "Origin-Host"
+#             destination: "Destination-Host"
+#
+#         # MAP Rule 2: Grouped AVP mapping
+#         # Copies Session-Id into a Proxy-Info grouped AVP
+#         # Syntax: "Parent-AVP:Child-AVP" for nested AVPs
+#         - map:
+#             source: "Session-Id"
+#             destination: "Proxy-Info:Session-Id"
+#
+#         # MAP Rule 3: 3GPP specific mapping
+#         # Map 3GPP subscription data from one AVP to another
+#         - map:
+#             source: "Subscription-Data"
+#             destination: "Requested-Subscription-Data"
+#
+#         # DROP Rule 1: Simple AVP drop
+#         # Removes Vendor-Specific-Application-Id from messages
+#         - drop: "Vendor-Specific-Application-Id"
+#
+#         # DROP Rule 2: Grouped AVP child drop
+#         # Removes specific AVP from a grouped AVP
+#         - drop: "Proxy-Info:Redirect-Host"
+#
+# Advanced Examples:
+#
+# 1. DRA with protocol translation
+#    Map different AVPs between different protocol versions:
+#    - map:
+#        source: "User-Name"
+#        destination: "MSISDN"
+#
+# 2. DRA with AVP filtering for privacy
+#    Remove sensitive information from messages:
+#    - drop: "User-Password"
+#    - drop: "CHAP-Password"
+#
+# 3. DRA with AVP enrichment
+#    Add routing information to messages:
+#    - map:
+#        source: "Origin-Realm"
+#        destination: "Proxy-Info:Origin-Realm"
+#
+# 4. DRA with multiple rewrite rules
+#    Combine mapping and dropping in one config:
+#    rules:
+#      - map:
+#          source: "Session-Id"
+#          destination: "Origin-State-Id"
+#      - drop: "Product-Name"
+#      - drop: "Firmware-Revision"
+#
+# Notes:
+#
+# 1. AVP paths use colon (:) as separator for nested/grouped AVPs
+#    Example: "Proxy-Info:Session-Id" means Session-Id inside Proxy-Info
+#
+# 2. Intermediate grouped AVPs are automatically created if they don't exist
+#    In the example above, Proxy-Info will be created if not present
+#
+# 3. Type checking:
+#    - OctetString AVPs can be mapped to any type
+#    - Other types must match exactly (e.g., Integer32 to Integer32)
+#    - Type mismatches are logged as warnings but processing continues
+#
+# 4. Multiple matches:
+#    - If an AVP appears multiple times, only the first instance is matched
+#    - For grouped AVPs with multiple children, specific child must be identified
+#
+# 5. Rule order:
+#    - Rules are processed in the order they appear in configuration
+#    - Later rules can modify results of earlier rules
+#
+# 6. Performance:
+#    - AVP lookups are cached after first access
+#    - Minimal performance impact when rules are properly configured
+#
+# Comparison with original freeDiameter rt_rewrite:
+#
+# Original freeDiameter syntax:
+#   MAP = "Source-AVP" > "Destination-AVP";
+#   MAP = "Grouped-AVP1" : "Sub-AVP" > "Grouped-AVP2" : "Target-AVP";
+#   DROP = "AVP-Name";
+#
+# godiam syntax (YAML):
+#   - map:
+#       source: "Source-AVP"
+#       destination: "Destination-AVP"
+#   - map:
+#       source: "Grouped-AVP1:Sub-AVP"
+#       destination: "Grouped-AVP2:Target-AVP"
+#   - drop: "AVP-Name"

@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "godiam.dra.fullname" . }}
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.dra.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.dra.replicas }}
+  selector:
+    matchLabels:
+      {{- include "godiam.dra.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "godiam.labels" . | nindent 8 }}
+        {{- include "godiam.dra.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/dra-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- if .Values.server.enabled }}
+      initContainers:
+        - name: wait-for-server
+          image: {{ include "godiam.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for backend server to be ready..."
+              until bash -c "echo > /dev/tcp/{{ include "godiam.server.fullname" . }}/{{ .Values.server.port }}" 2>/dev/null; do
+                sleep 1
+              done
+              echo "Server is ready"
+      {{- end }}
+      containers:
+        - name: dra
+          image: {{ include "godiam.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--config"
+            - "/etc/diameter/diameter.yaml"
+          ports:
+            - name: diameter
+              containerPort: {{ .Values.dra.port }}
+              protocol: TCP
+            {{- if has "sctp" .Values.dra.transport }}
+            - name: diameter-sctp
+              containerPort: {{ .Values.dra.port }}
+              protocol: SCTP
+            {{- end }}
+            {{- if .Values.dra.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.dra.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.dra.metrics.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/diameter
+              readOnly: true
+          {{- with .Values.dra.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "godiam.dra.fullname" . }}-config
+      {{- with .Values.dra.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dra.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dra.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,31 @@
+# Backend server 1 for endurance testing
+identity: "server1.backend.realm"
+realm: "backend.realm"
+
+listen:
+  port: 3870
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-server1"
+  firmware_revision: 1
+  watchdog_interval: 10s
+  connect_timeout: 5s
+  request_timeout: 10s
+
+peers_policy:
+  allow_unknown: true
+
+routing:
+  relay_enabled: false
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  - name: "app_cc"
+  - name: "prom_metrics"
+    config:
+      port: 9091

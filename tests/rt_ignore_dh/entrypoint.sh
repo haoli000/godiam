@@ -1,0 +1,68 @@
+#!/bin/bash
+# Entrypoint for godiam rt_ignore_dh test
+# Starts 3 godiam instances and validates Destination-Host ignoring
+
+set -e
+
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}==============================================${NC}"
+echo -e "${BLUE}  godiam rt_ignore_dh Test${NC}"
+echo -e "${BLUE}  Tests Destination-Host AVP ignoring${NC}"
+echo -e "${BLUE}==============================================${NC}"
+echo ""
+
+# Start GW (running rt_ignore_dh, relaying enabled)
+echo -e "${BLUE}[1/3] Starting godiam gw (with rt_ignore_dh)...${NC}"
+/usr/local/bin/diameterd --config /conf/gw.yaml > /tmp/gw.log 2>&1 &
+export PID_GW=$!
+sleep 1
+
+# Start right peer (server), connects to gw and handles the request
+echo -e "${BLUE}[2/3] Starting godiam server...${NC}"
+/usr/local/bin/diameterd --config /conf/server.yaml > /tmp/server.log 2>&1 &
+export PID_SERVER=$!
+sleep 1
+
+# Start left peer (client), connects to gw and sends a request
+echo -e "${BLUE}[3/3] Starting godiam client (sends test message)...${NC}"
+/usr/local/bin/diameterd --config /conf/client.yaml > /tmp/client.log 2>&1 &
+export PID_CLIENT=$!
+
+echo ""
+echo -e "${GREEN}All services started:${NC}"
+echo -e "  godiam gw:         PID $PID_GW"
+echo -e "  godiam server: PID $PID_SERVER"
+echo -e "  godiam client:  PID $PID_CLIENT"
+echo ""
+
+# Export PIDs for test.sh
+export PID_GW PID_SERVER PID_CLIENT
+
+# Run test mode or manual mode
+if [ "$1" = "manual" ]; then
+    echo "Manual mode: streaming logs..."
+    echo "Press Ctrl+C to exit"
+    echo ""
+    
+    tail -f /tmp/gw.log | sed 's/^/[gw] /' &
+    tail -f /tmp/server.log | sed 's/^/[server] /' &
+    tail -f /tmp/client.log | sed 's/^/[client] /' &
+    
+    wait
+else
+    echo "Running automated test..."
+    echo ""
+    
+    /test.sh
+    TEST_RESULT=$?
+    
+    echo ""
+    echo "Cleaning up processes..."
+    kill $PID_GW $PID_SERVER $PID_CLIENT 2>/dev/null || true
+    
+    exit $TEST_RESULT
+fi

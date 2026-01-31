@@ -1,0 +1,81 @@
+{{- if .Values.server.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "godiam.server.fullname" . }}
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.server.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.server.replicas }}
+  selector:
+    matchLabels:
+      {{- include "godiam.server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "godiam.labels" . | nindent 8 }}
+        {{- include "godiam.server.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/server-configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: server
+          image: {{ include "godiam.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--config"
+            - "/etc/diameter/diameter.yaml"
+          ports:
+            - name: diameter
+              containerPort: {{ .Values.server.port }}
+              protocol: TCP
+            {{- if has "sctp" .Values.server.transport }}
+            - name: diameter-sctp
+              containerPort: {{ .Values.server.port }}
+              protocol: SCTP
+            {{- end }}
+            {{- if .Values.server.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.server.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.server.metrics.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/diameter
+              readOnly: true
+          {{- with .Values.server.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "godiam.server.fullname" . }}-config
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,67 @@
+{{- if .Values.bench.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-bench
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.bench.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "godiam.bench.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-dra
+          image: {{ include "godiam.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for DRA to be ready..."
+              until bash -c "echo > /dev/tcp/{{ include "godiam.dra.fullname" . }}/{{ .Values.dra.port }}" 2>/dev/null; do
+                sleep 1
+              done
+              echo "DRA is ready"
+              {{- if .Values.server.enabled }}
+              echo "Waiting for DRA to peer with server..."
+              sleep 5
+              {{- end }}
+      containers:
+        - name: bench
+          image: {{ include "godiam.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /usr/local/bin/diameterbench
+          args:
+            - "--host"
+            - {{ include "godiam.dra.fullname" . | quote }}
+            - "--port"
+            - {{ .Values.dra.port | quote }}
+            - "--id"
+            - {{ .Values.dra.identity | quote }}
+            - "--realm"
+            - {{ .Values.bench.destinationRealm | quote }}
+            - "--conn"
+            - {{ .Values.bench.connections | quote }}
+            - "--duration"
+            - {{ .Values.bench.duration | quote }}
+            - "--rate"
+            - {{ .Values.bench.rate | quote }}
+            - "--network"
+            - {{ .Values.bench.transport | quote }}
+            - "--connect-interval"
+            - {{ .Values.bench.connectInterval | quote }}
+            - "--connect-retries"
+            - {{ .Values.bench.connectRetries | quote }}
+            - "--connect-timeout"
+            - {{ .Values.bench.connectTimeout | quote }}
+          {{- with .Values.bench.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

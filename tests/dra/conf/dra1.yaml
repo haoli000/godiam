@@ -1,0 +1,36 @@
+# godiam DRA 1 configuration (left side)
+identity: "dra1.access.realm"
+realm: "access.realm"
+
+listen:
+  port: 3868
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dra1"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers_policy:
+  allow_unknown: true
+
+# Routing to dra2 (right side)
+routing:
+  relay_enabled: true
+  dynamic_realm_peers: true
+  realm_routes:
+    "backend.realm":
+      - "dra2.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+  - id: 3
+    type: acct
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "app_acct"

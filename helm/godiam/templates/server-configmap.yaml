@@ -1,0 +1,54 @@
+{{- if .Values.server.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "godiam.server.fullname" . }}-config
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.server.selectorLabels" . | nindent 4 }}
+data:
+  diameter.yaml: |
+    identity: {{ .Values.server.identity | quote }}
+    realm: {{ .Values.server.realm | quote }}
+
+    listen:
+      port: {{ .Values.server.port }}
+      enable_tcp: {{ has "tcp" .Values.server.transport }}
+      enable_sctp: {{ has "sctp" .Values.server.transport }}
+
+    local:
+      vendor_id: {{ .Values.server.local.vendorId }}
+      product_name: {{ .Values.server.local.productName | quote }}
+      firmware_revision: {{ .Values.server.local.firmwareRevision }}
+      watchdog_interval: {{ .Values.server.local.watchdogInterval }}
+      connect_timeout: {{ .Values.server.local.connectTimeout }}
+      request_timeout: {{ .Values.server.local.requestTimeout }}
+
+    peers_policy:
+      allow_unknown: {{ .Values.server.peersPolicy.allowUnknown }}
+
+    routing:
+      relay_enabled: false
+
+    applications:
+      {{- range .Values.server.applications }}
+      - id: {{ .id }}
+        type: {{ .type | quote }}
+      {{- end }}
+
+    extensions:
+      - name: "app_cc"
+      {{- if .Values.server.metrics.enabled }}
+      - name: "prom_metrics"
+        config:
+          port: {{ .Values.server.metrics.port }}
+          bind_address: "0.0.0.0"
+      {{- end }}
+      {{- range .Values.server.extensions }}
+      - name: {{ .name | quote }}
+        {{- if .config }}
+        config:
+          {{- toYaml .config | nindent 10 }}
+        {{- end }}
+      {{- end }}
+{{- end }}

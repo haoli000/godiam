@@ -1,0 +1,60 @@
+# godiam DRA 2 configuration (right side)
+# Using godiam implementation - drops Destination-Host AVP
+identity: "dra2.backend.realm"
+realm: "backend.realm"
+
+listen:
+  address: "127.0.0.1"
+  port: 4868
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dra2"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+# Peers: knows peer2 (godiam) and dra1 (freeDiameter)
+peers:
+  - identity: "peer2.backend.realm"
+    realm: "backend.realm"
+    addresses:
+      - "127.0.0.1"
+    port: 3872
+    connect_on_start: true
+    persistent: true
+  - identity: "dra1.access.realm"
+    realm: "access.realm"
+    addresses:
+      - "127.0.0.1"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+# Routing to dra1 (freeDiameter on left side) as default
+routing:
+  relay_enabled: true
+  default_realm: "access.realm"
+  realm_routes:
+    "access.realm":
+      - "dra1.access.realm"
+
+applications:
+  - id: 4
+    type: auth
+  - id: 3
+    type: acct
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "test_app"
+
+  # rt_rewrite - DROP Destination-Host AVP for routing test
+  - name: "rt_rewrite"
+    config:
+      rules:
+        - drop: "Destination-Host"

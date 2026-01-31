@@ -1,0 +1,96 @@
+# godiam Helm chart values
+
+image:
+  repository: godiam
+  tag: ""  # Defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# DRA - Diameter Routing Agent (always deployed)
+dra:
+  replicas: 1
+  identity: "dra.test.realm"
+  realm: "test.realm"
+  port: 3868
+  transport:  # Protocols to enable: tcp, sctp, or both
+    - sctp
+
+  local:
+    vendorId: 0
+    productName: "godiam-dra"
+    firmwareRevision: 1
+    watchdogInterval: "30s"
+    connectTimeout: "10s"
+    requestTimeout: "30s"
+
+  peersPolicy:
+    allowUnknown: true
+
+  routing:
+    relayEnabled: true
+    defaultRealm: "backend.realm"
+
+  applications:
+    - id: 4
+      type: auth
+
+  # Additional extensions (prom_metrics is added automatically when metrics.enabled)
+  extensions: []
+
+  metrics:
+    enabled: true
+    port: 9090
+
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Backend Server with app_cc (optional)
+server:
+  enabled: true
+  replicas: 1
+  identity: "server.backend.realm"
+  realm: "backend.realm"
+  port: 3868
+  transport:  # Protocols to enable: tcp, sctp, or both
+    - sctp
+
+  local:
+    vendorId: 0
+    productName: "godiam-server"
+    firmwareRevision: 1
+    watchdogInterval: "30s"
+    connectTimeout: "10s"
+    requestTimeout: "30s"
+
+  peersPolicy:
+    allowUnknown: true
+
+  applications:
+    - id: 4
+      type: auth
+
+  # Additional extensions (app_cc and prom_metrics are added automatically)
+  extensions: []
+
+  metrics:
+    enabled: true
+    port: 9090
+
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Benchmark client (optional)
+bench:
+  enabled: false
+  connections: 10
+  duration: "10s"
+  rate: 1000
+  transport: "sctp"  # "tcp" or "sctp" (single protocol per bench run)
+  connectInterval: "10ms"
+  connectRetries: 3
+  connectTimeout: "10s"
+  destinationRealm: "backend.realm"
+  resources: {}

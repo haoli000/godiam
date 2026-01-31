@@ -1,0 +1,12 @@
+identity: hss.example.com
+realm: example.com
+listen:
+  port: 3868
+  enable_tcp: true
+local:
+  vendor_id: 10415
+  product_name: godiam HSS-Lite
+  watchdog_interval: 30s
+applications:
+  - id: 16777251  # 3GPP S6a
+    type: auth

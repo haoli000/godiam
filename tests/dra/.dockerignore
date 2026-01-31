@@ -1,0 +1,6 @@
+*.log
+*.crt
+*.key
+.git
+.gitignore
+vendor/

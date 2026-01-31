@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "godiam.dra.fullname" . }}-config
+  labels:
+    {{- include "godiam.labels" . | nindent 4 }}
+    {{- include "godiam.dra.selectorLabels" . | nindent 4 }}
+data:
+  diameter.yaml: |
+    identity: {{ .Values.dra.identity | quote }}
+    realm: {{ .Values.dra.realm | quote }}
+
+    listen:
+      port: {{ .Values.dra.port }}
+      enable_tcp: {{ has "tcp" .Values.dra.transport }}
+      enable_sctp: {{ has "sctp" .Values.dra.transport }}
+
+    local:
+      vendor_id: {{ .Values.dra.local.vendorId }}
+      product_name: {{ .Values.dra.local.productName | quote }}
+      firmware_revision: {{ .Values.dra.local.firmwareRevision }}
+      watchdog_interval: {{ .Values.dra.local.watchdogInterval }}
+      connect_timeout: {{ .Values.dra.local.connectTimeout }}
+      request_timeout: {{ .Values.dra.local.requestTimeout }}
+
+    peers_policy:
+      allow_unknown: {{ .Values.dra.peersPolicy.allowUnknown }}
+
+    {{- if .Values.server.enabled }}
+    peers:
+      - identity: {{ .Values.server.identity | quote }}
+        realm: {{ .Values.server.realm | quote }}
+        addresses:
+          - {{ printf "%s.%s.svc.cluster.local" (include "godiam.server.fullname" .) .Release.Namespace | quote }}
+        port: {{ .Values.server.port }}
+        network: {{ if has "sctp" .Values.dra.transport }}sctp{{ else }}tcp{{ end }}
+        connect_on_start: true
+        persistent: true
+        reconnect_interval: 5s
+    {{- end }}
+
+    routing:
+      relay_enabled: {{ .Values.dra.routing.relayEnabled }}
+      default_realm: {{ .Values.dra.routing.defaultRealm | quote }}
+      {{- if .Values.server.enabled }}
+      realm_routes:
+        {{ .Values.server.realm | quote }}:
+          - {{ .Values.server.identity | quote }}
+      {{- end }}
+
+    applications:
+      {{- range .Values.dra.applications }}
+      - id: {{ .id }}
+        type: {{ .type | quote }}
+      {{- end }}
+
+    extensions:
+      {{- if .Values.dra.metrics.enabled }}
+      - name: "prom_metrics"
+        config:
+          port: {{ .Values.dra.metrics.port }}
+          bind_address: "0.0.0.0"
+      {{- end }}
+      {{- range .Values.dra.extensions }}
+      - name: {{ .name | quote }}
+        {{- if .config }}
+        config:
+          {{- toYaml .config | nindent 10 }}
+        {{- end }}
+      {{- end }}

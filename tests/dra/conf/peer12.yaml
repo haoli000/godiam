@@ -1,0 +1,37 @@
+# Peer12 configuration (left side, connects to dra1)
+identity: "peer12.access.realm"
+realm: "access.realm"
+
+listen:
+  port: 3871
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-peer12"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+# Peer to dra1
+peers:
+  - identity: "dra1.access.realm"
+    realm: "access.realm"
+    addresses:
+      - "127.0.0.10"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+applications:
+  - id: 4
+    type: auth
+  - id: 3
+    type: acct
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "test_app"
