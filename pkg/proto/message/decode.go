@@ -194,14 +194,21 @@ func decodeAVP(data []byte) (*AVP, int, error) {
 	avp.Data = make([]byte, dataLen)
 	copy(avp.Data, data[headerSize:avpLen])
 
-	// Calculate padded length (AVP data must be padded to 4-byte boundary)
+	// Calculate padded length (AVP data must be padded to 4-byte boundary).
 	paddedLen := avpLen
 	if avpLen%4 != 0 {
 		paddedLen = avpLen + (4 - (avpLen % 4))
 	}
-	// Don't read past the buffer
+	// The full padded AVP must fit in the buffer. Silently truncating here
+	// would hide malformed messages and desynchronise subsequent AVP parsing.
 	if paddedLen > len(data) {
-		paddedLen = len(data)
+		return nil, 0, fmt.Errorf("AVP padding exceeds buffer: need %d, have %d", paddedLen, len(data))
+	}
+	// Padding bytes MUST be zero per RFC 6733 §4.
+	for i := avpLen; i < paddedLen; i++ {
+		if data[i] != 0 {
+			return nil, 0, fmt.Errorf("non-zero AVP padding at offset %d", i)
+		}
 	}
 
 	return avp, paddedLen, nil

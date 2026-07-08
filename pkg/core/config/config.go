@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/haoli000/godiam/pkg/proto/types"
@@ -48,6 +49,9 @@ type Config struct {
 
 	// ConfigPath is the path to the source config file (not serialized).
 	ConfigPath string `yaml:"-"`
+
+	// saveMu serialises concurrent writes from SaveExtensions.
+	saveMu sync.Mutex `yaml:"-"`
 }
 
 // ListenConfig configures listening endpoints.
@@ -254,6 +258,23 @@ func validate(c *Config) error {
 		if c.TLS.KeyFile == "" {
 			return fmt.Errorf("tls.key_file is required when TLS is enabled")
 		}
+		if err := checkFileReadable(c.TLS.CertFile); err != nil {
+			return fmt.Errorf("tls.cert_file: %w", err)
+		}
+		if err := checkFileReadable(c.TLS.KeyFile); err != nil {
+			return fmt.Errorf("tls.key_file: %w", err)
+		}
+		if c.TLS.CAFile != "" {
+			if err := checkFileReadable(c.TLS.CAFile); err != nil {
+				return fmt.Errorf("tls.ca_file: %w", err)
+			}
+		}
+		switch c.TLS.MinVersion {
+		case "", "1.2", "1.3":
+			// ok
+		default:
+			return fmt.Errorf("tls.min_version must be \"1.2\" or \"1.3\", got %q", c.TLS.MinVersion)
+		}
 	}
 
 	// Validate peers
@@ -261,8 +282,25 @@ func validate(c *Config) error {
 		if peer.Identity == "" {
 			return fmt.Errorf("peers[%d].identity is required", i)
 		}
+		if !isValidFQDN(peer.Identity) {
+			return fmt.Errorf("peers[%d].identity: %q is not a valid FQDN", i, peer.Identity)
+		}
 		if len(peer.Addresses) == 0 {
 			return fmt.Errorf("peers[%d].addresses is required", i)
+		}
+		for j, addr := range peer.Addresses {
+			if net.ParseIP(addr) == nil && !isValidFQDN(addr) {
+				return fmt.Errorf("peers[%d].addresses[%d]: %q is not a valid IP or FQDN", i, j, addr)
+			}
+		}
+		if peer.Port < 0 || peer.Port > 65535 {
+			return fmt.Errorf("peers[%d].port: %d out of range", i, peer.Port)
+		}
+		switch peer.Network {
+		case "", "tcp", "sctp":
+			// ok
+		default:
+			return fmt.Errorf("peers[%d].network must be \"tcp\" or \"sctp\", got %q", i, peer.Network)
 		}
 	}
 
@@ -285,25 +323,89 @@ func validate(c *Config) error {
 		}
 	}
 
+	// Validate extensions
+	seenExt := make(map[string]struct{}, len(c.Extensions))
+	for i, ext := range c.Extensions {
+		if ext.Name == "" {
+			return fmt.Errorf("extensions[%d].name is required", i)
+		}
+		if _, dup := seenExt[ext.Name]; dup {
+			return fmt.Errorf("extensions[%d]: duplicate name %q", i, ext.Name)
+		}
+		seenExt[ext.Name] = struct{}{}
+	}
+
+	return nil
+}
+
+// checkFileReadable returns an error if path is empty, missing, a directory, or unreadable.
+func checkFileReadable(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot stat %q: %w", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%q is a directory, not a file", path)
+	}
+	f, err := os.Open(path) //nolint:gosec // G304: path is admin-supplied config
+	if err != nil {
+		return fmt.Errorf("cannot open %q: %w", path, err)
+	}
+	_ = f.Close()
 	return nil
 }
 
 func isValidFQDN(s string) bool {
-	// Basic FQDN validation: contains at least one dot, no IP address
-	if net.ParseIP(s) != nil {
-		return false
-	}
-	// Allow localhost for testing
+	// Allow localhost for testing.
 	if s == "localhost" {
 		return true
 	}
-	// Must contain at least one dot
-	for _, c := range s {
-		if c == '.' {
-			return true
+	// Reject IP addresses.
+	if net.ParseIP(s) != nil {
+		return false
+	}
+	// RFC 1035 length limits.
+	if len(s) == 0 || len(s) > 253 {
+		return false
+	}
+	// Strip a single trailing dot (root label) if present.
+	if s[len(s)-1] == '.' {
+		s = s[:len(s)-1]
+	}
+	labels := 0
+	labelLen := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '.':
+			if labelLen == 0 {
+				return false // empty label (leading dot or "..")
+			}
+			if s[i-1] == '-' {
+				return false // label may not end with '-'
+			}
+			labels++
+			labelLen = 0
+		case c == '-':
+			if labelLen == 0 {
+				return false // label may not start with '-'
+			}
+			labelLen++
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'):
+			labelLen++
+		default:
+			return false
+		}
+		if labelLen > 63 {
+			return false
 		}
 	}
-	return false
+	if labelLen == 0 || s[len(s)-1] == '-' {
+		return false
+	}
+	labels++
+	// A FQDN must have at least two labels (e.g. "example.com").
+	return labels >= 2
 }
 
 // GetAuthAppIDs returns the configured authentication application IDs.
@@ -373,10 +475,14 @@ func Example() *Config {
 
 // SaveExtensions persists extension configuration changes to the YAML config file.
 // It reads the existing file, replaces the extensions section, and writes atomically.
+// Safe for concurrent callers on the same Config value.
 func (c *Config) SaveExtensions(extensions []ExtensionConfig) error {
 	if c.ConfigPath == "" {
 		return fmt.Errorf("no config file path set; cannot persist")
 	}
+
+	c.saveMu.Lock()
+	defer c.saveMu.Unlock()
 
 	// Read the full config, update extensions, and rewrite
 	data, err := os.ReadFile(c.ConfigPath)

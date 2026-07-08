@@ -12,19 +12,25 @@ import (
 	"github.com/haoli000/godiam/pkg/proto/types"
 )
 
-// Buffer pools for reducing allocations during encoding
+// Buffer pool size tiers for encoding.
+const (
+	smallBufSize  = 256
+	mediumBufSize = 4096
+)
+
+// Buffer pools for reducing allocations during encoding.
 var (
-	// Pool for small buffers (typical AVPs, up to 256 bytes)
+	// Pool for small buffers (typical AVPs, up to smallBufSize bytes).
 	smallBufPool = sync.Pool{
 		New: func() interface{} {
-			b := make([]byte, 256)
+			b := make([]byte, smallBufSize)
 			return &b
 		},
 	}
-	// Pool for medium buffers (typical messages, up to 4KB)
+	// Pool for medium buffers (typical messages, up to mediumBufSize bytes).
 	mediumBufPool = sync.Pool{
 		New: func() interface{} {
-			b := make([]byte, 4096)
+			b := make([]byte, mediumBufSize)
 			return &b
 		},
 	}
@@ -33,35 +39,29 @@ var (
 // getBuffer returns a buffer of at least the requested size from the appropriate pool.
 // The returned buffer should be released with putBuffer when done.
 func getBuffer(size int) []byte {
-	if size <= 256 {
+	if size <= smallBufSize {
 		bp := smallBufPool.Get().(*[]byte)
-		if cap(*bp) >= size {
-			return (*bp)[:size]
-		}
-		// Buffer too small, allocate new one
-		smallBufPool.Put(bp)
-	} else if size <= 4096 {
-		bp := mediumBufPool.Get().(*[]byte)
-		if cap(*bp) >= size {
-			return (*bp)[:size]
-		}
-		mediumBufPool.Put(bp)
+		return (*bp)[:size:cap(*bp)]
 	}
-	// Fall back to allocation for large messages
+	if size <= mediumBufSize {
+		bp := mediumBufPool.Get().(*[]byte)
+		return (*bp)[:size:cap(*bp)]
+	}
+	// Fall back to allocation for large messages; not pooled.
 	return make([]byte, size)
 }
 
-// putBuffer returns a buffer to the appropriate pool.
+// putBuffer returns a buffer to the appropriate pool based on its capacity.
+// Buffers not matching a pool tier (e.g. large one-off allocations) are dropped.
 func putBuffer(buf []byte) {
-	c := cap(buf)
-	if c >= 256 && c <= 256 {
-		b := buf[:c]
+	switch cap(buf) {
+	case smallBufSize:
+		b := buf[:smallBufSize]
 		smallBufPool.Put(&b)
-	} else if c >= 4096 && c <= 4096 {
-		b := buf[:c]
+	case mediumBufSize:
+		b := buf[:mediumBufSize]
 		mediumBufPool.Put(&b)
 	}
-	// Large buffers are not pooled
 }
 
 // Encode encodes the message to wire format.

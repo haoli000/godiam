@@ -22,6 +22,7 @@ import (
 // Start initiates the peer state machine.
 // This sends a Start event which triggers connection initiation from Closed state.
 func (p *Peer) Start() error {
+	p.smWG.Add(1)
 	go p.runStateMachine()
 	p.eventChan <- eventMessage{event: EventStart}
 	return nil
@@ -31,6 +32,7 @@ func (p *Peer) Start() error {
 // This is used for server-side peers when a connection is accepted with a CER.
 // Per RFC 6733 Section 5.6.1, we receive the connection and CER together as R-Conn-CER event.
 func (p *Peer) StartWithConnection(conn net.Conn, cer *message.Message) error {
+	p.smWG.Add(1)
 	go p.runStateMachine()
 	p.eventChan <- eventMessage{event: EventRConnCER, conn: conn, msg: cer}
 	return nil
@@ -44,6 +46,7 @@ func (p *Peer) InjectRConnCER(conn net.Conn, cer *message.Message) {
 
 // runStateMachine is the main goroutine for the peer state machine.
 func (p *Peer) runStateMachine() {
+	defer p.smWG.Done()
 	defer p.cleanup()
 
 	for {

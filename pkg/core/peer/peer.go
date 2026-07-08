@@ -253,6 +253,11 @@ type Peer struct {
 	pendingMu sync.Mutex
 	pending   map[types.HopByHopID]pendingRequest
 	nextE2E   atomic.Uint32
+
+	// smWG tracks the runStateMachine goroutine so Stop() can block until
+	// it has fully exited (and any pending state-change callbacks it fires
+	// have returned) before returning to the caller.
+	smWG sync.WaitGroup
 }
 
 type pendingRequest struct {
@@ -512,7 +517,16 @@ func (p *Peer) Disconnect(_ types.DisconnectCause) {
 	p.eventChan <- eventMessage{event: EventStop}
 }
 
-// Stop stops the peer state machine.
+// Stop stops the peer state machine and blocks until the state machine
+// goroutine (started by Start or StartWithConnection) has fully exited,
+// including any in-flight OnStateChange callback it fires on the way out.
+// This guarantees that once Stop returns, the peer will not touch any
+// caller-provided callbacks or resources again.
+//
+// Do NOT call Stop from an OnStateChange callback: that callback runs on
+// the state machine goroutine itself, so waiting for it would deadlock.
+// Use `go peer.Stop()` from callbacks instead.
 func (p *Peer) Stop() {
 	p.cancel()
+	p.smWG.Wait()
 }

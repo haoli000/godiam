@@ -282,6 +282,19 @@ func NewAnswer(req *Message) *Message {
 	}
 }
 
+// NewAnswerWithResult creates a Diameter answer for req and populates the
+// Result-Code AVP. Also sets the E (error) flag when the result is not 2xxx
+// (success), matching RFC 6733 §7.1. Handlers must still add Origin-Host and
+// Origin-Realm before sending.
+func NewAnswerWithResult(req *Message, code types.ResultCode) *Message {
+	ans := NewAnswer(req)
+	ans.SetResultCode(code)
+	if code < 2000 || code >= 3000 {
+		ans.Flags |= types.CmdFlagError
+	}
+	return ans
+}
+
 // Message flag helpers
 
 // IsRequest returns true if the R (request) flag is set.

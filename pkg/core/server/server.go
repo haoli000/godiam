@@ -340,7 +340,11 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.mu.Lock()
 			delete(s.peers, string(peerConn.DiameterID()))
 			s.mu.Unlock()
-			peerConn.Stop()
+			// OnStateChange always runs on the peer's own state-machine
+			// goroutine, so calling Stop() synchronously here would
+			// deadlock (Stop now waits for that goroutine to exit).
+			// Nothing here needs to block on it.
+			go peerConn.Stop()
 		}
 	})
 
