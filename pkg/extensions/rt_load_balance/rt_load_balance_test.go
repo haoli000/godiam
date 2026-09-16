@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -219,4 +220,8 @@ func TestInit(t *testing.T) {
 	if ext.peerEnumerate == nil {
 		t.Error("expected peerEnumerate to be set")
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

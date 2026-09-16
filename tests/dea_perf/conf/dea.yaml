@@ -1,0 +1,93 @@
+# Diameter Edge Agent for the performance test.
+#
+# Identical to baseline.yaml in transport, backend and routing; the only
+# difference is that traffic arrives on an *external* zone owned by a partner,
+# so every edge control runs on it:
+#
+#   dea_screening  validates origin, application, command and transit
+#   dea_ratelimit  meters the partner (ceiling set far above the test rate, so
+#                  the cost measured is the check, never the throttling)
+#   dea_topohide   allocates and reverses a pseudonym per internal host
+#   dea_route      enforces the external -> internal direction
+#
+# The partner deliberately lists no peers. The benchmark clients are admitted
+# by realm match instead, which is the path a real interconnect uses and the
+# one that binds a peer to its partner at connection time.
+identity: "dea.test.realm"
+realm: "test.realm"
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dea"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+zones:
+  - name: core
+    role: internal
+    realms: ["backend.realm"]
+    listen:
+      port: 3871
+      enable_tcp: true
+    peers_policy:
+      allow_unknown: false
+
+  - name: roaming
+    role: external
+    listen:
+      port: 3870
+      enable_tcp: true
+    peers_policy:
+      allow_unknown: false
+
+peers:
+  - identity: "server.backend.realm"
+    realm: "backend.realm"
+    zone: core
+    addresses:
+      - "127.0.0.1"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+partners:
+  - name: partner-perf
+    zone: roaming
+    realms: ["perf.partner.net"]
+    applications: [4]
+    commands: [272]
+    screening:
+      default_action: reject
+      reject_result_code: 5003
+      max_route_records: 6
+    topology_hiding:
+      mode: stateful
+      pseudonym_prefix: "th"
+      ttl: 30m
+      max_entries: 200000
+    rate_limit:
+      enabled: true
+      requests_per_second: 1000000
+      burst: 1000000
+
+routing:
+  relay_enabled: true
+  default_realm: "backend.realm"
+  realm_routes:
+    "backend.realm":
+      - "server.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  - name: "dea_screening"
+  - name: "dea_ratelimit"
+  - name: "dea_topohide"
+  - name: "dea_route"
+  - name: "prom_metrics"
+    config:
+      port: 9092

@@ -1,0 +1,111 @@
+# godiam Diameter Edge Agent under test.
+#
+# Two zones: "core" faces the internal network, "roaming" faces partners.
+# Two partners connect through the roaming zone: a well behaved one and a
+# hostile one whose traffic must be screened, throttled and refused transit.
+identity: "dea.edge.realm"
+realm: "edge.realm"
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dea"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+zones:
+  - name: core
+    role: internal
+    listen:
+      addresses: ["127.0.0.1"]
+      port: 4868
+      enable_tcp: true
+  - name: roaming
+    role: external
+    listen:
+      addresses: ["127.0.0.1"]
+      port: 5868
+      enable_tcp: true
+
+peers:
+  - identity: "hss.core.realm"
+    realm: "core.realm"
+    zone: core
+    addresses: ["127.0.0.1"]
+    port: 3870
+    connect_on_start: true
+    persistent: true
+
+partners:
+  - name: partner-good
+    zone: roaming
+    realms: ["good.realm"]
+    peers: ["cli.good.realm"]
+    applications: [9999]
+    commands: [272]
+    topology_hiding:
+      mode: stateful
+      pseudonym_prefix: "th"
+      ttl: 5m
+    rate_limit:
+      enabled: true
+      requests_per_second: 100
+      burst: 100
+
+  - name: partner-evil
+    zone: roaming
+    realms: ["evil.realm"]
+    peers: ["cli.evil.realm"]
+    applications: [9999]
+    commands: [272]
+    topology_hiding:
+      mode: static
+    rate_limit:
+      enabled: true
+      requests_per_second: 1
+      burst: 2
+
+  - name: partner-flood
+    zone: roaming
+    realms: ["flood.realm"]
+    peers: ["cli.flood.realm"]
+    applications: [9999]
+    commands: [272]
+    rate_limit:
+      enabled: true
+      requests_per_second: 1
+      burst: 3
+
+routing:
+  relay_enabled: true
+  realm_routes:
+    "core.realm":
+      - "hss.core.realm"
+    "good.realm":
+      - "cli.good.realm"
+    "evil.realm":
+      - "cli.evil.realm"
+    "flood.realm":
+      - "cli.flood.realm"
+
+applications:
+  - id: 4
+    type: auth
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "dea_screening"
+  - name: "dea_ratelimit"
+  - name: "dea_topohide"
+  - name: "dea_route"
+  - name: "admin_api"
+    config:
+      bind_address: "127.0.0.1"
+      port: 9001
+  - name: "prom_metrics"
+    config:
+      bind_address: "127.0.0.1"
+      port: 9101

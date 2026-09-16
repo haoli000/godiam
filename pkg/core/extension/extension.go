@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
 	"github.com/haoli000/godiam/pkg/proto/dictionary"
@@ -21,6 +22,9 @@ type InitContext interface {
 	GetPeers() []*peer.Peer
 	GetStartTime() time.Time
 	GetExtensionManager() *Manager
+	// GetEdgeRegistry returns the DEA zone/partner registry. It is never nil;
+	// callers should check Configured() before relying on the model.
+	GetEdgeRegistry() *edge.Registry
 }
 
 // Extension is the interface implemented by Diameter extensions.

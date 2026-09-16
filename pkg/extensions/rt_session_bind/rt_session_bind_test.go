@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -463,4 +464,8 @@ func TestMetricsProvider(t *testing.T) {
 	} else if m.Value != 1 {
 		t.Errorf("expected misses_total=1, got %f", m.Value)
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

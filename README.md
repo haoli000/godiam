@@ -17,6 +17,8 @@ godiam provides a complete implementation of the Diameter base protocol with sup
 - YAML-based configuration
 - Dynamic extension management via REST API
 - Credit-Control Application (RFC 4006)
+- Diameter Edge Agent: zones, roaming partners, ingress screening, topology
+  hiding and per-partner rate limiting (see [docs/dea-reference.md](docs/dea-reference.md))
 
 ## Installation
 
@@ -125,6 +127,7 @@ godiam/
 │   │   └── message/        # Message encoding/decoding
 │   ├── core/               # Core framework
 │   │   ├── config/         # Configuration
+│   │   ├── edge/           # Edge agent zone/partner registry
 │   │   ├── extension/      # Extension manager and lifecycle
 │   │   ├── routing/        # Message routing engine
 │   │   ├── peer/           # Peer state machine
@@ -135,6 +138,10 @@ godiam/
 │       ├── app_gx/         # 3GPP Gx (Policy and Charging)
 │       ├── app_s6a/        # 3GPP S6a (HSS interface)
 │       ├── dbg_msg_timings/ # Request-to-answer latency tracking
+│       ├── dea_ratelimit/  # Per-partner throttling (edge agent)
+│       ├── dea_route/      # Partner-aware routing and failover (edge agent)
+│       ├── dea_screening/  # GSMA FS.19 ingress screening (edge agent)
+│       ├── dea_topohide/   # Topology hiding (edge agent)
 │       ├── fifo_stats/    # Queue depth & time-in-queue statistics
 │       ├── prom_metrics/   # Prometheus metrics endpoint
 │       ├── rt_busypeers/   # Busy peer retry (TOO_BUSY failover)
@@ -163,6 +170,7 @@ godiam/
 | Transport     | TCP, SCTP        | TCP, SCTP (Linux)    |
 | TLS           | OpenSSL          | crypto/tls           |
 | Extensions    | Shared libraries | Go plugins (planned) |
+| Edge agent    | none             | zones, screening, topology hiding, rate limiting |
 
 ## Dynamic Extension Management
 
@@ -248,12 +256,12 @@ extensions:
 | `diameter_server_info` | gauge | identity, realm, version | Server identity (always 1) |
 | `diameter_server_uptime_seconds` | gauge | | Seconds since server start |
 | `diameter_peers_total` | gauge | | Number of configured peers |
-| `diameter_peer_up` | gauge | peer, realm | 1 if peer connection is open |
-| `diameter_peer_messages_sent_total` | gauge | peer, realm | Messages sent to peer |
-| `diameter_peer_messages_received_total` | gauge | peer, realm | Messages received from peer |
-| `diameter_peer_bytes_sent_total` | gauge | peer, realm | Bytes sent to peer |
-| `diameter_peer_bytes_received_total` | gauge | peer, realm | Bytes received from peer |
-| `diameter_peer_connection_duration_seconds` | gauge | peer, realm | Current connection duration |
+| `diameter_peer_up` | gauge | peer, realm, zone, partner | 1 if peer connection is open |
+| `diameter_peer_messages_sent_total` | gauge | peer, realm, zone, partner | Messages sent to peer |
+| `diameter_peer_messages_received_total` | gauge | peer, realm, zone, partner | Messages received from peer |
+| `diameter_peer_bytes_sent_total` | gauge | peer, realm, zone, partner | Bytes sent to peer |
+| `diameter_peer_bytes_received_total` | gauge | peer, realm, zone, partner | Bytes received from peer |
+| `diameter_peer_connection_duration_seconds` | gauge | peer, realm, zone, partner | Current connection duration |
 | `diameter_routing_requests_total` | gauge | | Requests entering the router |
 | `diameter_routing_relayed_total` | gauge | | Requests relayed to another peer |
 | `diameter_routing_dispatched_total` | gauge | | Requests dispatched locally |
@@ -265,6 +273,9 @@ extensions:
 | `diameter_dictionary_avps` | gauge | | AVPs in dictionary |
 | `diameter_dictionary_commands` | gauge | | Commands in dictionary |
 | `diameter_extensions_total` | gauge | state | Extensions by state |
+| `diameter_edge_zones` | gauge | | Configured edge zones |
+| `diameter_edge_partners` | gauge | | Configured roaming partners |
+| `diameter_edge_partner_peers_up` | gauge | partner, zone | Connected peers per partner |
 
 Standard Go runtime metrics (`go_*`) and process metrics (`process_*`) are also included.
 
@@ -338,6 +349,45 @@ make build && make test
 
 Available extension tests: `rt_hide_oh`, `rt_ignore_dh`, `rt_session_bind`,
 `rt_load_balance`, `rt_deny_by_size`, `rt_ereg`, `dbg_msg_timings`, `rt_redirect`.
+
+#### Diameter Edge Agent Test
+
+```bash
+cd tests/dea_integration
+make build && make test
+```
+
+Runs an edge agent with an internal and an external zone against three roaming
+partners (well behaved, hostile, flooding) and verifies relaying, topology
+hiding, screening, rate limiting, the edge admin endpoint and the edge metrics.
+
+#### Diameter Edge Agent Performance Test
+
+Benchmarks the same backend through a plain relay and through an edge agent
+running every `dea_*` control, so the printed delta is the cost of the edge
+controls themselves:
+
+```bash
+cd tests/dea_perf
+make build && make test
+```
+
+See [tests/dea_perf/README.md](tests/dea_perf/README.md) for the measured
+results and the capacity guidance they produced.
+
+#### Diameter Edge Agent Soak Test
+
+Runs the edge agent through idle, sustained load, connection churn, a burst and
+a long idle drain while sampling CPU, RSS, heap and goroutines, and judges it on
+whether it gives resources back:
+
+```bash
+cd tests/dea_soak
+make build && make test
+```
+
+See [tests/dea_soak/README.md](tests/dea_soak/README.md) for the phase rationale
+and the peer watchdog defect this test uncovered.
 
 See [tests/README.md](tests/README.md) for the full test matrix.
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -452,4 +453,8 @@ func TestInit_ScoreFloat64(t *testing.T) {
 	if ext.rules[0].score != 75 {
 		t.Errorf("expected score 75, got %d", ext.rules[0].score)
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

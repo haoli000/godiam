@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -277,4 +278,8 @@ func TestMetrics_NoAnswers(t *testing.T) {
 	if m["avg_latency_us"].Value != 0 {
 		t.Errorf("expected avg_latency_us=0 when no answers, got %f", m["avg_latency_us"].Value)
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

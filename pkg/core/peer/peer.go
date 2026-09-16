@@ -179,6 +179,10 @@ type Config struct {
 	ReconnectInterval time.Duration
 	// Persistent keeps the peer entry even after disconnect
 	Persistent bool
+	// Zone is the edge zone this peer belongs to (empty when DEA is not configured)
+	Zone string
+	// Partner is the roaming partner this peer belongs to (empty if none)
+	Partner string
 }
 
 // TLSConfig holds TLS configuration for a peer connection.
@@ -187,6 +191,8 @@ type TLSConfig struct {
 	KeyFile    string
 	CAFile     string
 	SkipVerify bool
+	// MinVersion is the minimum TLS version ("1.2" or "1.3", default "1.2")
+	MinVersion string
 }
 
 // Peer represents a Diameter peer per RFC 6733.
@@ -336,6 +342,29 @@ func (p *Peer) DiameterID() types.DiamID {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.diameterID
+}
+
+// Zone returns the edge zone this peer belongs to.
+func (p *Peer) Zone() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.config.Zone
+}
+
+// Partner returns the roaming partner this peer belongs to, if any.
+func (p *Peer) Partner() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.config.Partner
+}
+
+// SetZone assigns the edge zone and partner of this peer. It is used by the
+// server once the peer identity is known (after CER/CEA).
+func (p *Peer) SetZone(zone, partner string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.config.Zone = zone
+	p.config.Partner = partner
 }
 
 // Realm returns the peer's realm.

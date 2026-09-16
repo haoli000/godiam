@@ -1,0 +1,35 @@
+# Backend server for the DEA performance test.
+#
+# Stands in for the core network node the edge agent fronts. Both the baseline
+# relay and the edge agent route to this same server, so any difference between
+# the two runs is attributable to the edge controls and not to the backend.
+identity: "server.backend.realm"
+realm: "backend.realm"
+
+listen:
+  port: 3868
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-server"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers_policy:
+  allow_unknown: true
+
+routing:
+  relay_enabled: false
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  - name: "app_cc"
+  - name: "prom_metrics"
+    config:
+      port: 9091

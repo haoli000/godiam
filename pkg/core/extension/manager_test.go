@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
 	"github.com/haoli000/godiam/pkg/proto/dictionary"
@@ -669,4 +670,8 @@ func (e *orderTrackingExt) Init(_ InitContext, _ map[string]interface{}) error {
 func (e *orderTrackingExt) Stop() error {
 	*e.order = append(*e.order, e.name)
 	return nil
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

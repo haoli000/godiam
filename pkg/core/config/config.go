@@ -38,6 +38,14 @@ type Config struct {
 	// PeersPolicy configures inbound peer acceptance policy
 	PeersPolicy PeersPolicy `yaml:"peers_policy"`
 
+	// Zones defines the edge zones (internal/external network boundaries).
+	// When empty, a single implicit internal zone is derived from
+	// listen/tls/peers_policy, preserving pre-DEA behaviour.
+	Zones []ZoneConfig `yaml:"zones,omitempty"`
+
+	// Partners defines roaming partners reachable through external zones.
+	Partners []PartnerConfig `yaml:"partners,omitempty"`
+
 	// Applications lists the supported Diameter applications
 	Applications []ApplicationConfig `yaml:"applications"`
 
@@ -62,8 +70,14 @@ type ListenConfig struct {
 	Port int `yaml:"port"`
 	// SecurePort for TLS connections (default 5868)
 	SecurePort int `yaml:"secure_port"`
-	// EnableTCP enables TCP transport (default true)
+	// EnableTCP enables TCP transport on Port (default true). When TLS is
+	// enabled for the same zone this listener speaks TLS, preserving the
+	// historical single-port behaviour.
 	EnableTCP bool `yaml:"enable_tcp"`
+	// EnableTLS enables a dedicated TLS listener on SecurePort. It requires
+	// TLS to be enabled and is independent of EnableTCP, so a zone can offer
+	// cleartext and TLS endpoints at once.
+	EnableTLS bool `yaml:"enable_tls"`
 	// EnableSCTP enables SCTP transport (default false)
 	EnableSCTP bool `yaml:"enable_sctp"`
 }
@@ -122,6 +136,8 @@ type PeerConfig struct {
 	Persistent bool `yaml:"persistent,omitempty"`
 	// ReconnectInterval is the time between reconnection attempts
 	ReconnectInterval time.Duration `yaml:"reconnect_interval,omitempty"`
+	// Zone assigns this peer to an edge zone (defaults to the first internal zone)
+	Zone string `yaml:"zone,omitempty"`
 }
 
 // ApplicationConfig configures a Diameter application.
@@ -235,6 +251,43 @@ func applyDefaults(c *Config) {
 			c.Peers[i].ReconnectInterval = 30 * time.Second
 		}
 	}
+
+	applyEdgeDefaults(c)
+}
+
+// validateTLS validates a TLS configuration block.
+func validateTLS(t *TLSConfig) error {
+	if !t.Enabled {
+		return nil
+	}
+	if t.CertFile == "" {
+		return fmt.Errorf("cert_file is required when TLS is enabled")
+	}
+	if t.KeyFile == "" {
+		return fmt.Errorf("key_file is required when TLS is enabled")
+	}
+	if err := checkFileReadable(t.CertFile); err != nil {
+		return fmt.Errorf("cert_file: %w", err)
+	}
+	if err := checkFileReadable(t.KeyFile); err != nil {
+		return fmt.Errorf("key_file: %w", err)
+	}
+	if t.CAFile != "" {
+		if err := checkFileReadable(t.CAFile); err != nil {
+			return fmt.Errorf("ca_file: %w", err)
+		}
+	}
+	switch t.MinVersion {
+	case "", "1.2", "1.3":
+		return nil
+	default:
+		return fmt.Errorf("min_version must be \"1.2\" or \"1.3\", got %q", t.MinVersion)
+	}
+}
+
+// isValidIP reports whether s is a valid textual IP address.
+func isValidIP(s string) bool {
+	return net.ParseIP(s) != nil
 }
 
 func validate(c *Config) error {
@@ -251,30 +304,8 @@ func validate(c *Config) error {
 	}
 
 	// Validate TLS configuration
-	if c.TLS.Enabled {
-		if c.TLS.CertFile == "" {
-			return fmt.Errorf("tls.cert_file is required when TLS is enabled")
-		}
-		if c.TLS.KeyFile == "" {
-			return fmt.Errorf("tls.key_file is required when TLS is enabled")
-		}
-		if err := checkFileReadable(c.TLS.CertFile); err != nil {
-			return fmt.Errorf("tls.cert_file: %w", err)
-		}
-		if err := checkFileReadable(c.TLS.KeyFile); err != nil {
-			return fmt.Errorf("tls.key_file: %w", err)
-		}
-		if c.TLS.CAFile != "" {
-			if err := checkFileReadable(c.TLS.CAFile); err != nil {
-				return fmt.Errorf("tls.ca_file: %w", err)
-			}
-		}
-		switch c.TLS.MinVersion {
-		case "", "1.2", "1.3":
-			// ok
-		default:
-			return fmt.Errorf("tls.min_version must be \"1.2\" or \"1.3\", got %q", c.TLS.MinVersion)
-		}
+	if err := validateTLS(&c.TLS); err != nil {
+		return fmt.Errorf("tls: %w", err)
 	}
 
 	// Validate peers
@@ -317,10 +348,15 @@ func validate(c *Config) error {
 	// Validate listen addresses
 	if len(c.Listen.Addresses) > 0 {
 		for i, addr := range c.Listen.Addresses {
-			if net.ParseIP(addr) == nil {
+			if !isValidIP(addr) {
 				return fmt.Errorf("listen.addresses[%d]: %q is not a valid IP address", i, addr)
 			}
 		}
+	}
+
+	// Validate edge zones and partners
+	if err := validateEdge(c); err != nil {
+		return err
 	}
 
 	// Validate extensions

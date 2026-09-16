@@ -1,0 +1,33 @@
+# Internal application node behind the edge agent. It answers every request it
+# receives, so the partner facing assertions exercise a full round trip.
+identity: "hss.core.realm"
+realm: "core.realm"
+
+listen:
+  addresses: ["127.0.0.1"]
+  port: 3870
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-hss"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers_policy:
+  allow_unknown: true
+
+routing:
+  relay_enabled: false
+
+applications:
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "test_app"
+    config:
+      app_id: 9999

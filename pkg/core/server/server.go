@@ -6,7 +6,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -17,10 +16,10 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
-	"github.com/haoli000/godiam/pkg/core/transport"
 	"github.com/haoli000/godiam/pkg/proto/dictionary"
 	"github.com/haoli000/godiam/pkg/proto/message"
 	"github.com/haoli000/godiam/pkg/proto/types"
@@ -40,6 +39,9 @@ type Server struct {
 	// Routing and extensions
 	router *routing.Router
 	extMgr *extension.Manager
+
+	// Edge (DEA) zone/partner registry
+	edgeReg *edge.Registry
 
 	// Message handler (legacy, extensions should use router)
 	handler MessageHandler
@@ -65,6 +67,7 @@ func New(cfg *config.Config, dict *dictionary.Dictionary) *Server {
 		config:    cfg,
 		dict:      dict,
 		router:    router,
+		edgeReg:   edge.NewRegistry(cfg),
 		peers:     make(map[string]*peer.Peer),
 		ctx:       ctx,
 		cancel:    cancel,
@@ -149,90 +152,29 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// startListeners starts the TCP and/or SCTP listeners.
+// startListeners starts the listeners of every configured edge zone.
+// When no zones are configured an implicit internal zone derived from the
+// node-level listen/tls settings is used, preserving pre-DEA behaviour.
 func (s *Server) startListeners() error {
-	addr := fmt.Sprintf(":%d", s.config.Listen.Port)
-
-	// Secure TCP (TLS)
-	if s.config.TLS.Enabled && s.config.Listen.EnableTCP {
-		tlsConfig, err := s.loadTLSConfig()
-		if err != nil {
-			return fmt.Errorf("loading TLS config: %w", err)
+	zones := s.config.EffectiveZones()
+	for i := range zones {
+		if err := s.startZoneListeners(&zones[i]); err != nil {
+			return fmt.Errorf("zone %q: %w", zones[i].Name, err)
 		}
-		// Note: TLS usually on different port? The config allows Port and SecurePort.
-		// For simplicity, we assume listeners on Port (clear/upgradable) or TLS depending on flags,
-		// but here we follow the simplified model where TLS status dictates the listener type on the main port
-		// unless StartTLS is handled differently.
-		// However, typically one might want both.
-		// Given current config structure, we listen on s.config.Listen.Port.
-		l, err := tls.Listen("tcp", addr, tlsConfig)
-		if err != nil {
-			return fmt.Errorf("TLS listen: %w", err)
-		}
-		s.listeners = append(s.listeners, l)
-		go s.acceptLoop(l)
-	} else if s.config.Listen.EnableTCP {
-		// Cleartext TCP
-		l, err := transport.Listen("tcp", addr)
-		if err != nil {
-			return fmt.Errorf("TCP listen: %w", err)
-		}
-		s.listeners = append(s.listeners, l)
-		go s.acceptLoop(l)
 	}
 
-	// SCTP
-	if s.config.Listen.EnableSCTP {
-		var l net.Listener
-		var err error
-		if len(s.config.Listen.Addresses) > 0 {
-			// Bind SCTP to configured addresses for multihoming
-			var ips []net.IP
-			for _, a := range s.config.Listen.Addresses {
-				if ip := net.ParseIP(a); ip != nil {
-					ips = append(ips, ip)
-				}
-			}
-			l, err = transport.ListenSCTPAddresses(ips, s.config.Listen.Port)
-		} else {
-			l, err = transport.Listen("sctp", addr)
-		}
-		if err != nil {
-			return fmt.Errorf("SCTP listen: %w", err)
-		}
-		s.listeners = append(s.listeners, l)
-		go s.acceptLoop(l)
-	}
-
-	if len(s.listeners) == 0 {
+	s.mu.RLock()
+	count := len(s.listeners)
+	s.mu.RUnlock()
+	if count == 0 {
 		return fmt.Errorf("no listeners started")
 	}
 
 	return nil
 }
 
-// loadTLSConfig loads the TLS configuration.
-func (s *Server) loadTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(s.config.TLS.CertFile, s.config.TLS.KeyFile)
-	if err != nil {
-		return nil, err
-	}
-
-	config := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientAuth:   tls.NoClientCert,
-	}
-
-	if s.config.TLS.VerifyPeer {
-		config.ClientAuth = tls.RequireAndVerifyClientCert
-		// TODO: Load CA certificates
-	}
-
-	return config, nil
-}
-
 // acceptLoop accepts incoming connections from a listener.
-func (s *Server) acceptLoop(l net.Listener) {
+func (s *Server) acceptLoop(l net.Listener, zone *config.ZoneConfig) {
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -251,46 +193,38 @@ func (s *Server) acceptLoop(l net.Listener) {
 			}
 		}
 
-		go s.handleConnection(conn)
+		go s.handleConnection(conn, zone)
 	}
 }
 
 // handleConnection handles an incoming connection.
-func (s *Server) handleConnection(conn net.Conn) {
-	log.Printf("Handling connection from %v", conn.RemoteAddr())
+func (s *Server) handleConnection(conn net.Conn, zone *config.ZoneConfig) {
+	zone = s.zoneOrDefault(zone)
+	log.Printf("Handling connection from %v on zone %q", conn.RemoteAddr(), zone.Name)
+
 	// Create a new peer for this connection
 	p := peer.New(peer.Config{
 		Addresses:        []string{conn.RemoteAddr().String()},
 		WatchdogInterval: s.config.Local.WatchdogInterval,
 		Persistent:       false,
+		Zone:             zone.Name,
 	}, s.dict)
 
-	// Set inbound acceptance policy based on configuration
+	// Set inbound acceptance policy based on the zone and partner model
 	p.SetAcceptPolicy(func(originHost, originRealm types.DiamID) (bool, types.ResultCode) {
-		// If unknown peers are allowed, accept
-		if s.config.PeersPolicy.AllowUnknown {
-			return true, types.ResultSuccess
+		res := s.admitPeer(zone, conn, originHost, originRealm)
+		if !res.accepted {
+			log.Printf("Rejecting inbound peer on zone %q: %s", zone.Name, res.reason)
+			return false, res.code
 		}
-		oh := string(originHost)
-		or := string(originRealm)
-		// Check explicit allowlist (identities)
-		for _, id := range s.config.PeersPolicy.AllowIdentities {
-			if id == oh {
-				return true, types.ResultSuccess
-			}
+		p.SetZone(zone.Name, res.partner)
+		// A peer matched to a partner by realm is not in the static index, so
+		// record the binding or the edge extensions cannot tell which policy
+		// applies to it.
+		if reg := s.GetEdgeRegistry(); reg != nil && res.partner != "" {
+			reg.BindPeer(string(originHost), res.partner)
 		}
-		// Check configured peers
-		for _, pc := range s.config.Peers {
-			if pc.Identity == oh {
-				if pc.Realm == "" || pc.Realm == or {
-					return true, types.ResultSuccess
-				}
-				// Realm mismatch: reject as unknown peer (aligning with freeDiameter behavior)
-				return false, types.ResultUnknownPeer
-			}
-		}
-		// Default reject unknown inbound peers
-		return false, types.ResultUnknownPeer
+		return true, res.code
 	})
 
 	// Set up callbacks
@@ -340,6 +274,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 			s.mu.Lock()
 			delete(s.peers, string(peerConn.DiameterID()))
 			s.mu.Unlock()
+			if reg := s.GetEdgeRegistry(); reg != nil {
+				reg.UnbindPeer(string(peerConn.DiameterID()))
+			}
 			// OnStateChange always runs on the peer's own state-machine
 			// goroutine, so calling Stop() synchronously here would
 			// deadlock (Stop now waits for that goroutine to exit).
@@ -386,13 +323,31 @@ func (s *Server) connectToPeer(cfg config.PeerConfig) error {
 		Persistent:        cfg.Persistent,
 	}
 
+	// Resolve the edge zone/partner this peer belongs to
+	reg := s.GetEdgeRegistry()
+	pConfig.Zone = cfg.Zone
+	if pConfig.Zone == "" {
+		pConfig.Zone = reg.ZoneNameForPeer(cfg.Identity)
+	}
+	tlsSource := &s.config.TLS
+	if partner, ok := reg.PartnerForPeer(cfg.Identity); ok {
+		pConfig.Partner = partner.Name
+		if partner.TLS != nil {
+			tlsSource = partner.TLS
+		}
+	}
+	if zone, ok := reg.Zone(pConfig.Zone); ok && tlsSource == &s.config.TLS && zone.TLS.Enabled {
+		tlsSource = &zone.TLS.TLSConfig
+	}
+
 	// Configure TLS if enabled
 	if cfg.TLS {
 		pConfig.TLSConfig = &peer.TLSConfig{
-			CertFile:   s.config.TLS.CertFile,
-			KeyFile:    s.config.TLS.KeyFile,
-			CAFile:     s.config.TLS.CAFile,
-			SkipVerify: !s.config.TLS.VerifyPeer,
+			CertFile:   tlsSource.CertFile,
+			KeyFile:    tlsSource.KeyFile,
+			CAFile:     tlsSource.CAFile,
+			SkipVerify: !tlsSource.VerifyPeer,
+			MinVersion: tlsSource.MinVersion,
 		}
 	}
 
@@ -544,7 +499,19 @@ func (s *Server) GetStartTime() time.Time {
 	return s.startTime
 }
 
-// GetExtensionManager returns the server's extension manager.
+// GetEdgeRegistry returns the server's DEA zone/partner registry.
+func (s *Server) GetEdgeRegistry() *edge.Registry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.edgeReg
+}
+
+// EdgeRegistry returns the DEA zone/partner registry.
+func (s *Server) EdgeRegistry() *edge.Registry {
+	return s.GetEdgeRegistry()
+}
+
+// GetExtensionManager returns the extension manager.
 func (s *Server) GetExtensionManager() *extension.Manager {
 	return s.extMgr
 }

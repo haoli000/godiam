@@ -1,0 +1,48 @@
+# Baseline relay agent for the DEA performance test.
+#
+# A plain DRA: no zones, no partners, no dea_* extensions. It is the control
+# arm of the experiment, so it must differ from dea.yaml in exactly one
+# respect — the edge model — and match it in every other (same backend, same
+# relay routing, same application).
+identity: "baseline.test.realm"
+realm: "test.realm"
+
+listen:
+  port: 3869
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-baseline"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers_policy:
+  allow_unknown: true
+
+peers:
+  - identity: "server.backend.realm"
+    realm: "backend.realm"
+    addresses:
+      - "127.0.0.1"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+routing:
+  relay_enabled: true
+  default_realm: "backend.realm"
+  realm_routes:
+    "backend.realm":
+      - "server.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  - name: "prom_metrics"
+    config:
+      port: 9090

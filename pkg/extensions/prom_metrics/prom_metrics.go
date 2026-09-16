@@ -16,7 +16,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
+	"github.com/haoli000/godiam/pkg/core/peer"
 )
 
 const (
@@ -122,6 +124,11 @@ type diameterCollector struct {
 	dictAVPs         *prometheus.Desc
 	dictCommands     *prometheus.Desc
 
+	// Edge metrics
+	edgeZones        *prometheus.Desc
+	edgePartners     *prometheus.Desc
+	edgePartnerPeers *prometheus.Desc
+
 	// Extension metrics
 	extensionsTotal *prometheus.Desc
 }
@@ -149,32 +156,48 @@ func newDiameterCollector(ctx extension.InitContext) *diameterCollector {
 		peerUp: prometheus.NewDesc(
 			"diameter_peer_up",
 			"Whether a Diameter peer is in an open state (1) or not (0).",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
 		),
 		peerMessagesSent: prometheus.NewDesc(
 			"diameter_peer_messages_sent_total",
 			"Total messages sent to a peer.",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
 		),
 		peerMessagesReceived: prometheus.NewDesc(
 			"diameter_peer_messages_received_total",
 			"Total messages received from a peer.",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
 		),
 		peerBytesSent: prometheus.NewDesc(
 			"diameter_peer_bytes_sent_total",
 			"Total bytes sent to a peer.",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
 		),
 		peerBytesReceived: prometheus.NewDesc(
 			"diameter_peer_bytes_received_total",
 			"Total bytes received from a peer.",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
 		),
 		peerConnectionDuration: prometheus.NewDesc(
 			"diameter_peer_connection_duration_seconds",
 			"Duration of the current peer connection in seconds.",
-			[]string{"peer", "realm"}, nil,
+			[]string{"peer", "realm", "zone", "partner"}, nil,
+		),
+
+		edgeZones: prometheus.NewDesc(
+			"diameter_edge_zones",
+			"Number of configured edge zones, by role.",
+			[]string{"role"}, nil,
+		),
+		edgePartners: prometheus.NewDesc(
+			"diameter_edge_partners",
+			"Number of configured roaming partners, by zone.",
+			[]string{"zone"}, nil,
+		),
+		edgePartnerPeers: prometheus.NewDesc(
+			"diameter_edge_partner_peers_up",
+			"Number of connected peers of a partner.",
+			[]string{"partner", "zone"}, nil,
 		),
 
 		routingRequestsTotal: prometheus.NewDesc(
@@ -248,6 +271,9 @@ func (c *diameterCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.peerBytesSent
 	ch <- c.peerBytesReceived
 	ch <- c.peerConnectionDuration
+	ch <- c.edgeZones
+	ch <- c.edgePartners
+	ch <- c.edgePartnerPeers
 	ch <- c.routingRequestsTotal
 	ch <- c.routingRelayedTotal
 	ch <- c.routingDispatchedTotal
@@ -265,6 +291,7 @@ func (c *diameterCollector) Describe(ch chan<- *prometheus.Desc) {
 func (c *diameterCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collectServer(ch)
 	c.collectPeers(ch)
+	c.collectEdge(ch)
 	c.collectRouting(ch)
 	c.collectDictionary(ch)
 	c.collectExtensions(ch)
@@ -288,28 +315,87 @@ func (c *diameterCollector) collectPeers(ch chan<- prometheus.Metric) {
 		c.peersTotal, prometheus.GaugeValue, float64(len(peers)),
 	)
 
+	reg := c.ctx.GetEdgeRegistry()
 	for _, p := range peers {
 		peerID := string(p.DiameterID())
 		realm := string(p.Realm())
+		zone, partner := edgeLabels(reg, p)
 		stats := p.Stats()
 
 		up := float64(0)
 		if p.IsOpen() {
 			up = 1
 		}
-		ch <- prometheus.MustNewConstMetric(c.peerUp, prometheus.GaugeValue, up, peerID, realm)
-		ch <- prometheus.MustNewConstMetric(c.peerMessagesSent, prometheus.GaugeValue, float64(stats.MessagesSent), peerID, realm)
-		ch <- prometheus.MustNewConstMetric(c.peerMessagesReceived, prometheus.GaugeValue, float64(stats.MessagesReceived), peerID, realm)
-		ch <- prometheus.MustNewConstMetric(c.peerBytesSent, prometheus.GaugeValue, float64(stats.BytesSent), peerID, realm)
-		ch <- prometheus.MustNewConstMetric(c.peerBytesReceived, prometheus.GaugeValue, float64(stats.BytesReceived), peerID, realm)
+		ch <- prometheus.MustNewConstMetric(c.peerUp, prometheus.GaugeValue, up, peerID, realm, zone, partner)
+		ch <- prometheus.MustNewConstMetric(c.peerMessagesSent, prometheus.GaugeValue, float64(stats.MessagesSent), peerID, realm, zone, partner)
+		ch <- prometheus.MustNewConstMetric(c.peerMessagesReceived, prometheus.GaugeValue, float64(stats.MessagesReceived), peerID, realm, zone, partner)
+		ch <- prometheus.MustNewConstMetric(c.peerBytesSent, prometheus.GaugeValue, float64(stats.BytesSent), peerID, realm, zone, partner)
+		ch <- prometheus.MustNewConstMetric(c.peerBytesReceived, prometheus.GaugeValue, float64(stats.BytesReceived), peerID, realm, zone, partner)
 
 		if !stats.ConnectedSince.IsZero() {
 			ch <- prometheus.MustNewConstMetric(
 				c.peerConnectionDuration, prometheus.GaugeValue,
 				time.Since(stats.ConnectedSince).Seconds(),
-				peerID, realm,
+				peerID, realm, zone, partner,
 			)
 		}
+	}
+}
+
+// edgeLabels resolves the zone and partner a peer belongs to. Both labels are
+// empty when the node is not configured as an edge agent.
+func edgeLabels(reg *edge.Registry, p *peer.Peer) (zone, partner string) {
+	zone, partner = p.Zone(), p.Partner()
+	if reg == nil || !reg.Configured() {
+		return zone, partner
+	}
+	identity := string(p.DiameterID())
+	if zone == "" {
+		zone = reg.ZoneNameForPeer(identity)
+	}
+	if partner == "" {
+		if pc, ok := reg.PartnerForPeer(identity); ok {
+			partner = pc.Name
+		}
+	}
+	return zone, partner
+}
+
+// collectEdge reports the zone and partner model plus partner connectivity.
+func (c *diameterCollector) collectEdge(ch chan<- prometheus.Metric) {
+	reg := c.ctx.GetEdgeRegistry()
+	if reg == nil || !reg.Configured() {
+		return
+	}
+
+	byRole := map[string]float64{}
+	for _, z := range reg.Zones() {
+		byRole[z.Role]++
+	}
+	for role, count := range byRole {
+		ch <- prometheus.MustNewConstMetric(c.edgeZones, prometheus.GaugeValue, count, role)
+	}
+
+	byZone := map[string]float64{}
+	connected := map[string]float64{}
+	for _, p := range reg.Partners() {
+		byZone[p.Zone]++
+		connected[p.Name] = 0
+	}
+	for zone, count := range byZone {
+		ch <- prometheus.MustNewConstMetric(c.edgePartners, prometheus.GaugeValue, count, zone)
+	}
+
+	for _, p := range c.ctx.GetPeers() {
+		if !p.IsOpen() {
+			continue
+		}
+		if pc, ok := reg.PartnerForPeer(string(p.DiameterID())); ok {
+			connected[pc.Name]++
+		}
+	}
+	for _, p := range reg.Partners() {
+		ch <- prometheus.MustNewConstMetric(c.edgePartnerPeers, prometheus.GaugeValue, connected[p.Name], p.Name, p.Zone)
 	}
 }
 

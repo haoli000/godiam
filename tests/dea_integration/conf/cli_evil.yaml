@@ -1,0 +1,48 @@
+# Hostile roaming partner. It uses an application it is not entitled to, so the
+# edge agent must screen it, and it bursts well past its rate limit.
+identity: "cli.evil.realm"
+realm: "evil.realm"
+
+listen:
+  addresses: ["127.0.0.1"]
+  port: 3872
+  enable_tcp: true
+
+local:
+  vendor_id: 0
+  product_name: "godiam-partner-evil"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+peers:
+  - identity: "dea.edge.realm"
+    realm: "edge.realm"
+    addresses: ["127.0.0.1"]
+    port: 5868
+    connect_on_start: true
+    persistent: true
+
+routing:
+  relay_enabled: false
+  realm_routes:
+    "core.realm":
+      - "dea.edge.realm"
+    "good.realm":
+      - "dea.edge.realm"
+
+applications:
+  - id: 4
+    type: auth
+  - id: 9999
+    type: auth
+
+extensions:
+  - name: "dbg_msg_dumps"
+  - name: "test_app"
+    config:
+      app_id: 4
+      send_on_start: true
+      dest_realm: "core.realm"
+      count: 1

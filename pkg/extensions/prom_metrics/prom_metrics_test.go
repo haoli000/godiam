@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -77,9 +78,9 @@ func TestCollectorDescribe(t *testing.T) {
 		descs = append(descs, d)
 	}
 
-	// We expect 20 metric descriptors
-	if len(descs) != 20 {
-		t.Errorf("expected 20 descriptors, got %d", len(descs))
+	// We expect 23 metric descriptors
+	if len(descs) != 23 {
+		t.Errorf("expected 23 descriptors, got %d", len(descs))
 	}
 }
 
@@ -298,7 +299,7 @@ func TestCollectorPeerLabelsInHTTPOutput(t *testing.T) {
 
 	// Peer is not started, so DiameterID() returns "" (set during CER exchange)
 	// and IsOpen() returns false making up=0
-	if !strings.Contains(text, `diameter_peer_up{peer="",realm=""} 0`) {
+	if !strings.Contains(text, `diameter_peer_up{partner="",peer="",realm="",zone=""} 0`) {
 		t.Error("expected peer_up=0 for unstarted peer")
 	}
 	if !strings.Contains(text, "diameter_peers_total 1") {
@@ -697,4 +698,8 @@ func TestExtensionMetricsNotCollectedWhenInactive(t *testing.T) {
 	if count != 0 {
 		t.Errorf("expected 0 metrics for inactive extension, got %d", count)
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

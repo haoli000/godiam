@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 )
 
@@ -22,6 +23,7 @@ type adminAPI struct {
 	server *http.Server
 	mgr    *extension.Manager
 	cfg    *config.Config
+	reg    *edge.Registry
 }
 
 // Name returns the extension name.
@@ -33,6 +35,7 @@ func (a *adminAPI) Init(ctx extension.InitContext, cfg map[string]interface{}) e
 
 	a.mgr = ctx.GetExtensionManager()
 	a.cfg = ctx.GetConfig()
+	a.reg = ctx.GetEdgeRegistry()
 
 	port := 9001
 	if p, ok := cfg["port"].(int); ok {
@@ -49,6 +52,7 @@ func (a *adminAPI) Init(ctx extension.InitContext, cfg map[string]interface{}) e
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/extensions", a.handleExtensions)
 	mux.HandleFunc("/api/v1/extensions/", a.handleExtensionByName)
+	mux.HandleFunc("/api/v1/edge", a.handleEdge)
 
 	listenAddr := net.JoinHostPort(bindAddr, fmt.Sprintf("%d", port))
 	a.server = &http.Server{

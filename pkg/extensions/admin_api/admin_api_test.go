@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/haoli000/godiam/pkg/core/config"
+	"github.com/haoli000/godiam/pkg/core/edge"
 	"github.com/haoli000/godiam/pkg/core/extension"
 	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
@@ -434,4 +435,8 @@ func TestRestartWithNewConfig(t *testing.T) {
 	if ext.lastConfig["port"] != float64(9999) {
 		t.Fatalf("expected port 9999, got %v", ext.lastConfig["port"])
 	}
+}
+
+func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
+	return edge.NewRegistry(m.GetConfig())
 }

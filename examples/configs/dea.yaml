@@ -1,0 +1,146 @@
+# Diameter Edge Agent example configuration.
+#
+# A single node facing two networks: the operator's own core on the "core" zone
+# and a roaming interconnect on the "roaming" zone. See docs/dea-reference.md
+# for the full reference.
+
+identity: "dea.edge.example.com"
+realm: "edge.example.com"
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dea"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+zones:
+  # Internal side. "realms" declares what this agent terminates on behalf of the
+  # nodes behind it, so partner traffic toward them is not treated as transit
+  # and identities inside them are masked on the way out.
+  - name: core
+    role: internal
+    realms: ["core.example.com"]
+    listen:
+      addresses: ["10.0.0.1"]
+      port: 3868
+      enable_tcp: true
+    peers_policy:
+      allow_unknown: false
+
+  # Partner side. Mutual TLS, and the client certificate must match the identity
+  # presented in the CER.
+  - name: roaming
+    role: external
+    listen:
+      addresses: ["198.51.100.1"]
+      secure_port: 5868
+      enable_tls: true
+    tls:
+      enabled: true
+      cert_file: "/etc/diameter/edge-cert.pem"
+      key_file: "/etc/diameter/edge-key.pem"
+      ca_file: "/etc/diameter/partner-ca.pem"
+      verify_peer: true
+      min_version: "1.2"
+      require_client_cert_identity: true
+    peers_policy:
+      allow_unknown: false
+
+peers:
+  - identity: "hss1.core.example.com"
+    realm: "core.example.com"
+    zone: core
+    addresses: ["10.0.0.10"]
+    port: 3868
+    connect_on_start: true
+    persistent: true
+  - identity: "hss2.core.example.com"
+    realm: "core.example.com"
+    zone: core
+    addresses: ["10.0.0.11"]
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+partners:
+  # A fully policed partner: reversible topology hiding, S6a only, throttled.
+  - name: partner-a
+    zone: roaming
+    realms: ["partnera.com", "*.partnera.com"]
+    plmn_ids: ["24001"]
+    peers:
+      - identity: "dea1.partnera.com"
+        priority: 0
+        weight: 10
+      - identity: "dea2.partnera.com"
+        priority: 0
+        weight: 5
+      - identity: "dea3.partnera.com"
+        priority: 1
+    applications: [16777251]
+    commands: [316, 318]
+    screening:
+      default_action: reject
+      reject_result_code: 5003
+      max_route_records: 6
+    topology_hiding:
+      mode: stateful
+      pseudonym_prefix: "th"
+      ttl: 30m
+      max_entries: 100000
+    rate_limit:
+      enabled: true
+      requests_per_second: 500
+      burst: 750
+      per_peer:
+        requests_per_second: 300
+      per_command:
+        316:
+          requests_per_second: 200
+
+  # A partner still being onboarded: violations are audited but not enforced,
+  # and topology hiding is the cheap static variant.
+  - name: partner-b
+    zone: roaming
+    realms: ["partnerb.net"]
+    peers: ["dea1.partnerb.net"]
+    screening:
+      default_action: log
+    topology_hiding:
+      mode: static
+    rate_limit:
+      enabled: true
+      requests_per_second: 100
+
+routing:
+  relay_enabled: true
+  realm_routes:
+    "core.example.com":
+      - "hss1.core.example.com"
+      - "hss2.core.example.com"
+
+applications:
+  - id: 16777251
+    type: auth
+    vendor_id: 10415
+
+extensions:
+  - name: "dea_screening"
+    config:
+      audit_log: true
+  - name: "dea_ratelimit"
+    config:
+      audit_log: true
+  - name: "dea_topohide"
+  - name: "dea_route"
+  - name: "rt_busypeers"
+  - name: "admin_api"
+    config:
+      bind_address: "127.0.0.1"
+      port: 9000
+  - name: "prom_metrics"
+    config:
+      bind_address: "127.0.0.1"
+      port: 9090

@@ -108,7 +108,69 @@ Location: `rt_redirect/`
 
 Tests the rt_redirect extension (redirect indication caching per RFC 6733 §6.12). Verifies extension initialization and normal message flow with the extension active.
 
-#### 11. Endurance Test
+#### 11. Diameter Edge Agent Test
+
+Location: `dea_integration/`
+
+Tests godiam as a Diameter Edge Agent facing roaming partners:
+
+- A DEA with an internal zone (`core`) and an external zone (`roaming`)
+- An internal application node plus three partners: well behaved, hostile and flooding
+- Asserts partner relaying, topology hiding (pseudonym Origin-Host, no internal
+  identity or realm leaked), FS.19 ingress screening (5003), partner rate
+  limiting (3004), the `/api/v1/edge` admin endpoint and the edge metrics
+
+**Quick Start:**
+
+```bash
+cd dea_integration
+make build && make test
+```
+
+#### 12. Diameter Edge Agent Performance Test
+
+Location: `dea_perf/`
+
+Measures the cost of the edge controls by benchmarking the same backend twice:
+once through a plain relay agent and once through an edge agent running
+screening, rate limiting, stateful topology hiding and edge routing. Clients
+connect on the external zone as a roaming partner and are admitted by realm
+match. Each run asserts that nothing was rejected, throttled or left unhidden,
+so a throughput figure cannot come from work the agent skipped.
+
+**Quick Start:**
+
+```bash
+cd dea_perf
+make build && make test
+```
+
+#### 13. Diameter Edge Agent Soak Test
+
+Location: `dea_soak/`
+
+Runs an edge agent through a long run — idle baseline, sustained load,
+connect/disconnect churn, a burst, then a long idle drain — sampling CPU, RSS,
+heap and goroutines throughout, and judges it on resource behaviour rather than
+throughput. The phases separate classes of resource bug: growth under load that
+is bounded by a cache cap is expected work, growth while idle is not, and
+goroutines and heap must come back down once traffic stops. The drain outlasts
+both the pseudonym TTL and Go's forced GC period so that reclamation is
+actually observable.
+
+This test found the watchdog defect described in `docs/dea-reference.md`: a peer
+that lost a DWA stayed in Suspect forever, silently leaving routing.
+
+**Quick Start:**
+
+```bash
+cd dea_soak
+make build && make test       # Default: 120s phases
+make quick                    # Short run, for validating the harness
+make long                     # Extended: 600s phases
+```
+
+#### 14. Endurance Test
 
 Location: `endurance/`
 
@@ -141,6 +203,7 @@ See [endurance/README.md](endurance/README.md) for details.
 | dbg_msg_timings  | godiam only           | Test timing & queue tracking      |
 | rt_redirect      | godiam only           | Test redirect caching             |
 | Endurance        | godiam only           | DRA resilience & failure recovery |
+| DEA Integration  | godiam only           | Edge screening, hiding & limiting |
 
 ## Running All Integration Tests
 
@@ -176,6 +239,15 @@ cd tests/dbg_msg_timings && make test && cd ../..
 
 # Run rt_redirect test
 cd tests/rt_redirect && make test && cd ../..
+
+# Run Diameter Edge Agent test
+cd tests/dea_integration && make build && make test && cd ../..
+
+# Run Diameter Edge Agent performance test
+cd tests/dea_perf && make build && make test && cd ../..
+
+# Run Diameter Edge Agent soak test (CPU/memory/goroutine monitoring)
+cd tests/dea_soak && make build && make test && cd ../..
 
 # Run endurance test (requires --cap-add NET_ADMIN for iptables phases)
 cd tests/endurance && make build && make test && cd ../..

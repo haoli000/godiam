@@ -842,6 +842,27 @@ func (r *Router) Stats() (routed, relayed, dispatched, errors, loops, answersRel
 		r.stats.AnswersRelayed.Load()
 }
 
+// RelayOrigin returns the identity of the peer that originated the relayed
+// request carrying the given outbound hop-by-hop ID, if that transaction is
+// still in flight. The entry is left in place, so this is safe to call from an
+// incoming handler before RouteIn consumes it.
+//
+// The hop-by-hop ID is chosen by this node, so an answer can only match a
+// transaction if it genuinely belongs to a request this node relayed. Handlers
+// use it to discover where an answer is headed, which the answer itself does
+// not say.
+func (r *Router) RelayOrigin(hbhID types.HopByHopID) (string, bool) {
+	val, loaded := r.prevHopByHop.Load(hbhID)
+	if !loaded {
+		return "", false
+	}
+	txn, ok := val.(relayTxn)
+	if !ok {
+		return "", false
+	}
+	return txn.OriginalPeer, true
+}
+
 // FailoverPeer removes all relay transactions involving the given peer identity
 // (either as inbound originator or outbound target) and returns the number of
 // removed entries. This should be called when a peer disconnects to prevent

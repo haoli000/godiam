@@ -27,7 +27,9 @@ var (
 	serverHost  = flag.String("host", "127.0.0.1", "Server hostname or IP")
 	serverPort  = flag.Int("port", 3868, "Server port")
 	serverID    = flag.String("id", "server.example.com", "Server Diameter Identity")
-	realm       = flag.String("realm", "example.com", "Diameter Realm")
+	realm       = flag.String("realm", "example.com", "Destination-Realm to address requests to")
+	originRealm = flag.String("origin-realm", "", "Origin-Realm to present (default: -realm). Set this to "+
+		"benchmark an edge agent, where the client lives in a partner realm distinct from the one it addresses")
 	connections = flag.Int("conn", 10, "Number of concurrent connections")
 	duration    = flag.Duration("duration", 10*time.Second, "Test duration")
 	rate        = flag.Int("rate", 1000, "Target requests per second (total)")
@@ -154,9 +156,16 @@ func connectWithRetry(id int, dict *dictionary.Dictionary, stop <-chan struct{})
 		}
 
 		p := peer.New(clientCfg, dict)
+		// The identity is kept inside the origin realm: edge screening rejects a
+		// host that claims a realm it does not belong to. Without -origin-realm
+		// the historical identity is used unchanged.
+		localRealm, localHostRealm := *realm, "example.com"
+		if *originRealm != "" {
+			localRealm, localHostRealm = *originRealm, *originRealm
+		}
 		p.SetLocalOverride(peer.LocalConfig{
-			DiameterIdentity: types.DiamID(fmt.Sprintf("bench-client-%d.example.com", id)),
-			Realm:            types.DiamID(*realm),
+			DiameterIdentity: types.DiamID(fmt.Sprintf("bench-client-%d.%s", id, localHostRealm)),
+			Realm:            types.DiamID(localRealm),
 			HostIPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 			AuthAppIDs:       []types.ApplicationID{types.AppIDCreditControl},
 		})

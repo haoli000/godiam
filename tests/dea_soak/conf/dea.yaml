@@ -1,0 +1,90 @@
+# Diameter Edge Agent under soak.
+#
+# The same model tests/dea_perf uses, with two deliberate differences aimed at
+# resource behaviour rather than throughput:
+#
+#   ttl          short, so the sweeper has to reclaim within the run instead of
+#                holding every pseudonym until the process exits
+#   max_entries  small, so the cap and its eviction path are exercised at a rate
+#                the test can actually reach
+#
+# Both make the store turn over many times during the run, which is the point:
+# a leak hides in steady state and shows up under turnover.
+identity: "dea.test.realm"
+realm: "test.realm"
+
+local:
+  vendor_id: 0
+  product_name: "godiam-dea"
+  firmware_revision: 1
+  watchdog_interval: 30s
+  connect_timeout: 10s
+  request_timeout: 30s
+
+zones:
+  - name: core
+    role: internal
+    realms: ["backend.realm"]
+    listen:
+      port: 3871
+      enable_tcp: true
+    peers_policy:
+      allow_unknown: false
+
+  - name: roaming
+    role: external
+    listen:
+      port: 3870
+      enable_tcp: true
+    peers_policy:
+      allow_unknown: false
+
+peers:
+  - identity: "server.backend.realm"
+    realm: "backend.realm"
+    zone: core
+    addresses:
+      - "127.0.0.1"
+    port: 3868
+    connect_on_start: true
+    persistent: true
+
+partners:
+  - name: partner-soak
+    zone: roaming
+    realms: ["soak.partner.net"]
+    applications: [4]
+    commands: [272]
+    screening:
+      default_action: reject
+      reject_result_code: 5003
+      max_route_records: 6
+    topology_hiding:
+      mode: stateful
+      pseudonym_prefix: "th"
+      ttl: 30s
+      max_entries: 20000
+    rate_limit:
+      enabled: true
+      requests_per_second: 1000000
+      burst: 1000000
+
+routing:
+  relay_enabled: true
+  default_realm: "backend.realm"
+  realm_routes:
+    "backend.realm":
+      - "server.backend.realm"
+
+applications:
+  - id: 4
+    type: auth
+
+extensions:
+  - name: "dea_screening"
+  - name: "dea_ratelimit"
+  - name: "dea_topohide"
+  - name: "dea_route"
+  - name: "prom_metrics"
+    config:
+      port: 9092

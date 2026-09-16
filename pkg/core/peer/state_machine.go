@@ -8,9 +8,11 @@ package peer
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -517,8 +519,12 @@ func (p *Peer) handleStateROpen(ev eventMessage) error {
 		return nil
 
 	case EventTimeout:
-		// Watchdog timeout -> Suspect
+		// Watchdog timeout -> Suspect. The timer has to be rearmed here: it is
+		// what bounds the wait for the DWA. Without it a lost DWA leaves the
+		// peer in Suspect with nothing scheduled to fire again, so it is never
+		// closed, never reconnected and never usable for routing again.
 		p.setState(StateSuspect)
+		p.startWatchdog()
 		return p.sendDWROnConn(p.rConn)
 
 	default:
@@ -592,8 +598,10 @@ func (p *Peer) handleStateIOpen(ev eventMessage) error {
 		return nil
 
 	case EventTimeout:
-		// Watchdog timeout -> Suspect
+		// Watchdog timeout -> Suspect. See handleStateROpen: the rearm is what
+		// makes a lost DWA recoverable.
 		p.setState(StateSuspect)
+		p.startWatchdog()
 		return p.sendDWROnConn(p.iConn)
 
 	default:
@@ -1250,6 +1258,7 @@ func (p *Peer) loadTLSConfig() (*tls.Config, error) {
 	cfg := &tls.Config{
 		InsecureSkipVerify: p.config.TLSConfig.SkipVerify, //nolint:gosec // G402: TLS verification configured by user
 		ServerName:         string(p.config.DiameterIdentity),
+		MinVersion:         tlsMinVersion(p.config.TLSConfig.MinVersion),
 	}
 
 	// Load certificate if provided
@@ -1261,13 +1270,29 @@ func (p *Peer) loadTLSConfig() (*tls.Config, error) {
 		cfg.Certificates = []tls.Certificate{cert}
 	}
 
-	// Load CA if provided
+	// Load the CA pool used to verify the remote certificate
 	if p.config.TLSConfig.CAFile != "" {
-		// TODO: In a real implementation, load the CA pool here.
-		_ = p.config.TLSConfig.CAFile
+		pem, err := os.ReadFile(p.config.TLSConfig.CAFile) //nolint:gosec // G304: path is admin-supplied config
+		if err != nil {
+			return nil, fmt.Errorf("reading ca_file %q: %w", p.config.TLSConfig.CAFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ca_file %q contains no usable certificates", p.config.TLSConfig.CAFile)
+		}
+		cfg.RootCAs = pool
 	}
 
 	return cfg, nil
+}
+
+// tlsMinVersion maps a configured minimum TLS version to its constant.
+// Unknown or empty values fall back to TLS 1.2.
+func tlsMinVersion(v string) uint16 {
+	if v == "1.3" {
+		return tls.VersionTLS13
+	}
+	return tls.VersionTLS12
 }
 
 // ============================================================================
