@@ -36,7 +36,7 @@ const (
 // String returns the string representation of a log level.
 func (l Level) String() string {
 	names := []string{"DEBUG", "INFO", "NOTICE", "WARN", "ERROR", "FATAL"}
-	if int(l) < len(names) {
+	if l >= 0 && int(l) < len(names) {
 		return names[l]
 	}
 	return fmt.Sprintf("LEVEL(%d)", l)
@@ -45,7 +45,7 @@ func (l Level) String() string {
 // ShortString returns a short representation for log output.
 func (l Level) ShortString() string {
 	names := []string{"DBG", "INF", "NOT", "WRN", "ERR", "FAT"}
-	if int(l) < len(names) {
+	if l >= 0 && int(l) < len(names) {
 		return names[l]
 	}
 	return "???"
@@ -281,6 +281,11 @@ func Fatal(format string, args ...interface{}) {
 
 // WithPrefix returns a new logger with the given prefix.
 func WithPrefix(prefix string) *Logger {
+	// The default logger's fields are guarded by its mutex, and a caller may
+	// still be reconfiguring it while extensions build their own loggers at
+	// startup. Copying them unlocked is a data race.
+	defaultLogger.mu.Lock()
+	defer defaultLogger.mu.Unlock()
 	return &Logger{
 		level:      defaultLogger.level,
 		output:     defaultLogger.output,

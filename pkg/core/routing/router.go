@@ -85,6 +85,31 @@ func (e *RoutingError) Error() string {
 	return fmt.Sprintf("routing error %d", e.Code)
 }
 
+// relayPeerIdentity returns the identity the router knows a peer by, which is
+// the key side of a relay transaction. The negotiated CER identity is
+// authoritative once the peer is open; before that the configured identity is
+// the only name the routing tables could have used.
+func relayPeerIdentity(p *peer.Peer) string {
+	if id := p.DiameterID(); id != "" {
+		return string(id)
+	}
+	return string(p.Config().DiameterIdentity)
+}
+
+// relayKey identifies a relay transaction.
+//
+// A hop-by-hop ID is only unique *per connection* (RFC 6733 3), and every peer
+// generates its own sequence starting from zero, so two outbound peers hand out
+// the same IDs. Keying the transaction map on the ID alone therefore made
+// concurrent relays to different peers collide: the second Store evicted the
+// first, one answer was dropped with "no routes available", and the other was
+// returned to the client carrying the wrong original hop-by-hop ID. Pairing the
+// ID with the peer it was minted for restores the uniqueness the map assumes.
+type relayKey struct {
+	OutboundPeer string
+	HBHID        types.HopByHopID
+}
+
 // relayTxn stores relay transaction info for routing answers back.
 type relayTxn struct {
 	OriginalPeer  string           // Original inbound peer identity
@@ -128,7 +153,7 @@ type Router struct {
 	// Transaction map: new Hop-by-Hop ID -> relay transaction info
 	// Used to relay answers back to the originating peer with correct HBHID
 	// Using sync.Map for lock-free concurrent access (optimal for distinct keys per goroutine)
-	prevHopByHop sync.Map // types.HopByHopID -> relayTxn
+	prevHopByHop sync.Map // relayKey -> relayTxn
 
 	// nextHBH is a counter used to generate unique Hop-by-Hop IDs for relay
 	// via non-*peer.Peer senders (the interface-based send path).
@@ -565,10 +590,15 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 	// If this is an answer and we are a relay, try to forward back to previous hop
 	if !msg.IsRequest() && r.relayEnabled {
 		// Use sync.Map's LoadAndDelete for atomic load+delete (lock-free)
+		// An answer's hop-by-hop ID is only meaningful on the connection it
+		// arrived on, so the peer is part of the key.
 		var txn relayTxn
 		var ok bool
-		if val, loaded := r.prevHopByHop.LoadAndDelete(msg.HopByHopID); loaded {
-			txn, ok = val.(relayTxn)
+		if p != nil {
+			key := relayKey{OutboundPeer: relayPeerIdentity(p), HBHID: msg.HopByHopID}
+			if val, loaded := r.prevHopByHop.LoadAndDelete(key); loaded {
+				txn, ok = val.(relayTxn)
+			}
 		}
 
 		if ok {
@@ -635,9 +665,20 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 		addProxyInfo(msg, r.localIdentity)
 	}
 
+	// A peer that refuses a message is excluded and the loop retries, so when
+	// every candidate is gone the surviving error says only that no route is
+	// left. That is misleading when the route existed and the peer simply
+	// applied backpressure: reporting the last send failure distinguishes an
+	// overloaded next hop from a genuine routing gap.
+	var lastSendErr error
+
 	for {
 		nextHop, err := r.RouteOutWithExclusion(msg, exclude)
 		if err != nil {
+			if lastSendErr != nil {
+				return r.errorAnswer(p, msg, types.ResultUnableToDeliver,
+					fmt.Sprintf("relay failed: %v (last next hop refused the message: %v)", err, lastSendErr))
+			}
 			return r.errorAnswer(p, msg, types.ResultUnableToDeliver, fmt.Sprintf("relay failed: %v", err))
 		}
 
@@ -657,8 +698,11 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 			newHBHID := outPeer.NextHopByHopID()
 			msg.HopByHopID = newHBHID
 
+			// Key on the identity the answer will arrive under, which is the
+			// peer's own, not the routing-table name that selected it.
+			outID := relayPeerIdentity(outPeer)
 			if p != nil {
-				r.prevHopByHop.Store(newHBHID, relayTxn{
+				r.prevHopByHop.Store(relayKey{OutboundPeer: outID, HBHID: newHBHID}, relayTxn{
 					OriginalPeer:  string(p.DiameterID()),
 					OriginalHBHID: originalHBHID,
 					OutboundPeer:  string(nextHop),
@@ -667,7 +711,8 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 			}
 
 			if err := outPeer.Send(msg); err != nil {
-				r.prevHopByHop.Delete(newHBHID)
+				lastSendErr = err
+				r.prevHopByHop.Delete(relayKey{OutboundPeer: outID, HBHID: newHBHID})
 				msg.HopByHopID = originalHBHID
 				exclude[nextHop] = struct{}{}
 				continue
@@ -682,7 +727,7 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 			msg.HopByHopID = newHBHID
 
 			if p != nil {
-				r.prevHopByHop.Store(newHBHID, relayTxn{
+				r.prevHopByHop.Store(relayKey{OutboundPeer: string(nextHop), HBHID: newHBHID}, relayTxn{
 					OriginalPeer:  string(p.DiameterID()),
 					OriginalHBHID: originalHBHID,
 					OutboundPeer:  string(nextHop),
@@ -691,7 +736,8 @@ func (r *Router) RouteIn(p *peer.Peer, msg *message.Message) error {
 			}
 
 			if err := sender.Send(msg); err != nil {
-				r.prevHopByHop.Delete(newHBHID)
+				lastSendErr = err
+				r.prevHopByHop.Delete(relayKey{OutboundPeer: string(nextHop), HBHID: newHBHID})
 				msg.HopByHopID = originalHBHID
 				exclude[nextHop] = struct{}{}
 				continue
@@ -843,16 +889,16 @@ func (r *Router) Stats() (routed, relayed, dispatched, errors, loops, answersRel
 }
 
 // RelayOrigin returns the identity of the peer that originated the relayed
-// request carrying the given outbound hop-by-hop ID, if that transaction is
-// still in flight. The entry is left in place, so this is safe to call from an
-// incoming handler before RouteIn consumes it.
+// request that the given outbound peer answered with the given hop-by-hop ID,
+// if that transaction is still in flight. The entry is left in place, so this
+// is safe to call from an incoming handler before RouteIn consumes it.
 //
 // The hop-by-hop ID is chosen by this node, so an answer can only match a
 // transaction if it genuinely belongs to a request this node relayed. Handlers
 // use it to discover where an answer is headed, which the answer itself does
-// not say.
-func (r *Router) RelayOrigin(hbhID types.HopByHopID) (string, bool) {
-	val, loaded := r.prevHopByHop.Load(hbhID)
+// not say. The peer is required because the ID is unique only per connection.
+func (r *Router) RelayOrigin(outboundPeer string, hbhID types.HopByHopID) (string, bool) {
+	val, loaded := r.prevHopByHop.Load(relayKey{OutboundPeer: outboundPeer, HBHID: hbhID})
 	if !loaded {
 		return "", false
 	}

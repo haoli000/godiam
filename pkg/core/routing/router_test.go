@@ -727,11 +727,14 @@ func TestStatsAnswerRelayIncrementsCounters(t *testing.T) {
 		t.Fatalf("RouteIn request failed: %v", err)
 	}
 
-	// Now simulate the answer coming back with the new HBH ID
+	// Now simulate the answer coming back with the new HBH ID. It arrives on
+	// the connection the request went out on, which is part of the relay key:
+	// a hop-by-hop ID is unique only per connection.
 	ans := message.NewAnswer(req)
 	ans.HopByHopID = req.HopByHopID // This was rewritten by relay
+	answeringPeer := peer.New(peer.Config{DiameterIdentity: "relay-peer"}, nil)
 
-	if err := router.RouteIn(nil, ans); err != nil {
+	if err := router.RouteIn(answeringPeer, ans); err != nil {
 		t.Fatalf("RouteIn answer failed: %v", err)
 	}
 
@@ -1193,4 +1196,90 @@ func TestRelaySweepPreservesFreshEntries(t *testing.T) {
 	}
 
 	router.StopRelaySweep()
+}
+
+// TestAnswersFromDifferentPeersWithTheSameHopByHopID reproduces a defect found
+// by the rt_load_balance integration suite: every peer generates its own
+// hop-by-hop ID sequence starting at zero, so relaying to two backends produced
+// two transactions with the same ID. Keyed on the ID alone, the second evicted
+// the first, half the answers were dropped as "no routes available", and the
+// survivors could be returned against another client's request.
+func TestAnswersFromDifferentPeersWithTheSameHopByHopID(t *testing.T) {
+	router := NewRouter()
+	router.SetLocalIdentity("local.example.com", "example.com")
+	router.SetRelay(true)
+
+	clientA := &capturingPeer{}
+	clientB := &capturingPeer{}
+	router.SetPeerLookup(func(identity types.DiamID) (interface{}, bool) {
+		switch identity {
+		case "client-a":
+			return clientA, true
+		case "client-b":
+			return clientB, true
+		}
+		return nil, false
+	})
+
+	// Both backends minted the same outbound hop-by-hop ID, which is legal:
+	// the ID only has to be unique on its own connection.
+	const shared = types.HopByHopID(5)
+	router.prevHopByHop.Store(relayKey{OutboundPeer: "backend-a", HBHID: shared}, relayTxn{
+		OriginalPeer: "client-a", OriginalHBHID: 111, OutboundPeer: "backend-a", CreatedAt: time.Now(),
+	})
+	router.prevHopByHop.Store(relayKey{OutboundPeer: "backend-b", HBHID: shared}, relayTxn{
+		OriginalPeer: "client-b", OriginalHBHID: 222, OutboundPeer: "backend-b", CreatedAt: time.Now(),
+	})
+
+	answerFrom := func(backend string) {
+		req := message.NewRequest(types.CmdCodeCreditControl, types.AppIDCreditControl)
+		ans := message.NewAnswer(req)
+		ans.HopByHopID = shared
+		if err := router.RouteIn(peer.New(peer.Config{DiameterIdentity: types.DiamID(backend)}, nil), ans); err != nil {
+			t.Fatalf("RouteIn answer from %s failed: %v", backend, err)
+		}
+	}
+
+	answerFrom("backend-a")
+	answerFrom("backend-b")
+
+	if !clientA.called || !clientB.called {
+		t.Fatalf("both clients must receive their answer, got a=%v b=%v", clientA.called, clientB.called)
+	}
+	if clientA.msg.HopByHopID != 111 {
+		t.Errorf("client-a answer HBH = %d, want 111 (its own request's ID)", clientA.msg.HopByHopID)
+	}
+	if clientB.msg.HopByHopID != 222 {
+		t.Errorf("client-b answer HBH = %d, want 222 (its own request's ID)", clientB.msg.HopByHopID)
+	}
+}
+
+// TestRelayReportsWhyTheNextHopRefused pins the diagnostic that the dea_soak
+// burst made necessary: when the only candidate rejects the message because its
+// send queue is full, the peer is healthy and the route exists, but the error
+// used to claim there was no route at all, sending operators after a routing
+// misconfiguration that does not exist.
+func TestRelayReportsWhyTheNextHopRefused(t *testing.T) {
+	router := NewRouter()
+	router.SetLocalIdentity("local.example.com", "example.com")
+	router.SetRelay(true)
+	router.AddHostRoute("remote.host.com", "busy-peer")
+
+	router.SetPeerLookup(func(identity types.DiamID) (interface{}, bool) {
+		if identity == "busy-peer" {
+			return &failingPeer{}, true
+		}
+		return nil, false
+	})
+
+	req := message.NewRequest(types.CmdCodeCreditControl, types.AppIDCreditControl)
+	req.AddAVP(message.NewDiameterIdentityAVP(types.AVPCodeDestinationHost, types.AVPFlagMandatory, "remote.host.com"))
+
+	err := router.RouteIn(peer.New(peer.Config{DiameterIdentity: "client.example.com"}, nil), req)
+	if err == nil {
+		t.Fatal("relaying to a peer that refuses every message must fail")
+	}
+	if !strings.Contains(err.Error(), "send failed") {
+		t.Errorf("error %q does not say why the next hop refused the message", err)
+	}
 }

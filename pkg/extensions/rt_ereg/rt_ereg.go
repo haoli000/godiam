@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 
 	"github.com/haoli000/godiam/pkg/core/extension"
-	"github.com/haoli000/godiam/pkg/core/peer"
 	"github.com/haoli000/godiam/pkg/core/routing"
 	"github.com/haoli000/godiam/pkg/proto/dictionary"
 	"github.com/haoli000/godiam/pkg/proto/message"
@@ -95,7 +94,10 @@ func (e *rtEreg) Init(ctx extension.InitContext, config map[string]interface{}) 
 	log.Printf("Initializing extension: rt_ereg (%d rules)", len(e.rules))
 
 	// Priority 45: runs after ignore_dh (35) and rewrite (40), before dispatch.
-	ctx.GetRouter().RegisterInHandler("rt_ereg", 45, e.handleRouting)
+	// Score adjustments must run on the outgoing path: RouteIn hands incoming
+	// handlers an empty candidate list and discards what they return, so a boost
+	// registered there never reaches the routing decision.
+	ctx.GetRouter().RegisterOutHandler("rt_ereg", 45, e.handleRouting)
 	return nil
 }
 
@@ -126,7 +128,7 @@ func (e *rtEreg) lookupAVP(name string) (types.AVPCode, types.VendorID) {
 }
 
 // handleRouting checks AVP values against regex rules and adjusts candidate scores.
-func (e *rtEreg) handleRouting(_ *peer.Peer, msg *message.Message, candidates []routing.Route) ([]routing.Route, error) {
+func (e *rtEreg) handleRouting(msg *message.Message, candidates []routing.Route) ([]routing.Route, error) {
 	if !msg.IsRequest() {
 		return candidates, nil
 	}

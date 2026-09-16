@@ -105,6 +105,26 @@ This test verifies that godiam and freeDiameter can interoperate as Diameter Rou
 - Docker
 - Access to `haoli1/freediameter:latest` base image (or build freeDiameter locally)
 
+`haoli1/freediameter:latest` is published for **linux/amd64 only**, so the whole
+image is amd64: the Dockerfile cross-compiles the godiam binaries with
+`GOARCH=amd64` rather than letting the builder stage follow the host. Without
+that pin an arm64 host produces an aarch64 binary inside an amd64 image, and the
+container reports `No such file or directory` for a binary that is plainly
+present — the missing file is the ELF interpreter.
+
+On an arm64 host the run therefore relies on emulation. To run it natively
+against an amd64 daemon instead:
+
+```bash
+DOCKER_HOST=tcp://127.0.0.1:2375 make build
+DOCKER_HOST=tcp://127.0.0.1:2375 make test
+```
+
+Both paths are verified; the native one is faster and exercises the real
+architecture. Confirm which you got with
+`od -An -tx1 -j18 -N2 /usr/local/bin/godiam-diameterd` inside the image:
+`3e 00` is x86-64, `b7 00` is aarch64.
+
 ### Build from godiam root directory
 
 ```bash

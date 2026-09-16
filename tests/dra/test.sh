@@ -122,7 +122,9 @@ if [ $SCORE -eq $TOTAL ]; then
 elif [ $SCORE -ge 3 ]; then
     log "${YELLOW}⚠ DRA test PARTIALLY PASSED (${SCORE}/${TOTAL})${NC}"
     log "${YELLOW}⚠ Basic functionality works but some checks failed${NC}"
-    exit 0
+    # A partial pass is a failure: exiting 0 here once let a
+    # completely non-functional extension report green for months.
+    exit 1
 else
     log "${RED}✗ DRA test FAILED (${SCORE}/${TOTAL})${NC}"
     log "${RED}✗ Check logs in /tmp/*.log for details${NC}"

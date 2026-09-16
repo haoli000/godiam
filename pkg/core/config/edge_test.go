@@ -399,3 +399,52 @@ partners:
 		t.Fatalf("client TLS without ca_file must stay valid: %v", err)
 	}
 }
+
+// Zone lookups in the edge registry match exactly, so every control that asks
+// "is this partner's zone external?" depends on the partner's reference being
+// spelled the same way as the zone. Validation is what guarantees it: a
+// reference that does not match must be refused here, because at runtime an
+// unresolvable zone name reads as "not external", which would silently turn
+// off screening, topology hiding and transit refusal for a real partner.
+func TestPartnerZoneReferenceMustMatchExactly(t *testing.T) {
+	_, err := parseEdge(t, `
+zones:
+  - name: roaming
+    role: external
+    listen:
+      port: 3869
+partners:
+  - name: partner-a
+    zone: Roaming
+    realms: ["partnera.com"]
+    peers: ["dea1.partnera.com"]
+`)
+	if err == nil {
+		t.Fatal("a partner referencing its zone in the wrong case was accepted; at runtime that zone reads as internal and the edge controls go quiet")
+	}
+	if !strings.Contains(err.Error(), "unknown zone") {
+		t.Fatalf("error = %v, want it to name the unresolved zone", err)
+	}
+}
+
+// The same applies to a peer pinned to a zone: an unresolved zone name would
+// place the peer outside every policy that zone carries.
+func TestPeerZoneReferenceMustMatchExactly(t *testing.T) {
+	_, err := parseEdge(t, `
+zones:
+  - name: core
+    role: internal
+    listen:
+      port: 3868
+peers:
+  - identity: "hss.example.com"
+    addresses: ["10.0.0.5"]
+    zone: CORE
+`)
+	if err == nil {
+		t.Fatal("a peer referencing its zone in the wrong case was accepted")
+	}
+	if !strings.Contains(err.Error(), "unknown zone") {
+		t.Fatalf("error = %v, want it to name the unresolved zone", err)
+	}
+}

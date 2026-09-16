@@ -169,7 +169,7 @@ func TestHandleRouting_MatchBoostsScore(t *testing.T) {
 		{PeerIdentity: "hss2", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, msg, candidates)
+	result, err := ext.handleRouting(msg, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestHandleRouting_NoMatch(t *testing.T) {
 		{PeerIdentity: "hss1", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, msg, candidates)
+	result, err := ext.handleRouting(msg, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestHandleRouting_AnswerIgnored(t *testing.T) {
 		{PeerIdentity: "hss1", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, ans, candidates)
+	result, err := ext.handleRouting(ans, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestHandleRouting_MissingAVP(t *testing.T) {
 		{PeerIdentity: "hss1", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, msg, candidates)
+	result, err := ext.handleRouting(msg, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestHandleRouting_DiameterIdentityAVP(t *testing.T) {
 		{PeerIdentity: "hss-b", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, msg, candidates)
+	result, err := ext.handleRouting(msg, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestHandleRouting_MultipleRules(t *testing.T) {
 		{PeerIdentity: "hss2", Score: 100},
 	}
 
-	result, err := ext.handleRouting(nil, msg, candidates)
+	result, err := ext.handleRouting(msg, candidates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -457,4 +457,45 @@ func TestInit_ScoreFloat64(t *testing.T) {
 
 func (m *mockInitContext) GetEdgeRegistry() *edge.Registry {
 	return edge.NewRegistry(m.GetConfig())
+}
+
+// The boost is worthless unless it reaches the routing decision. RouteIn hands
+// incoming handlers an empty candidate slice and discards what they return, so
+// registering there left rt_ereg with no effect on routing at all while every
+// direct-call test above still passed. This drives a real Router instead.
+func TestBoostReachesTheRoutingDecision(t *testing.T) {
+	ctx := newTestContext()
+	ctx.router.SetLocalIdentity("gw.test.realm", "test.realm")
+	ctx.router.AddRealmRoute("backend.realm", "server1.backend.realm", "server2.backend.realm")
+
+	ext := &rtEreg{}
+	cfg := map[string]interface{}{
+		"rules": []interface{}{
+			map[string]interface{}{
+				"avp":     "Destination-Realm",
+				"pattern": `backend\.realm`,
+				"server":  "server1.backend.realm",
+				"score":   200,
+			},
+		},
+	}
+	if err := ext.Init(ctx, cfg); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	msg := message.NewRequest(272, 9999)
+	msg.AddAVP(message.NewDiameterIdentityAVP(types.AVPCodeDestinationRealm, types.AVPFlagMandatory, "backend.realm"))
+
+	// The boosted peer outscores the realm route by 200, so it must win every
+	// time. Repeating catches the case where the boost is ignored and the
+	// router falls back to picking randomly within one equal-score tier.
+	for i := 0; i < 50; i++ {
+		dest, err := ctx.router.RouteOut(msg)
+		if err != nil {
+			t.Fatalf("RouteOut: %v", err)
+		}
+		if dest != "server1.backend.realm" {
+			t.Fatalf("routed to %q, want the boosted peer", dest)
+		}
+	}
 }

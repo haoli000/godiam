@@ -60,9 +60,28 @@ Resource checks:
 
 Plus the same guard `dea_perf` uses, because a soak that quietly stopped doing
 the work would look excellent in every resource graph: the controls must have
-run, rejected nothing, throttled nothing, and — measured at the backend — every
-request must have been **relayed to the internal peer** rather than answered at
-the edge.
+run, rejected nothing and throttled nothing, and delivery must be confirmed
+**at the backend** rather than from the clients’ answer counts, since an agent
+that cannot deliver answers `UNABLE_TO_DELIVER` itself and a client counts that
+as an answer.
+
+Delivery is asserted differently either side of the burst, because the two
+phases offer different things:
+
+- **steady and churn** stay within capacity, so every request must reach the
+  internal peer; any shortfall is a real delivery failure.
+- **burst** deliberately offers several times the steady rate against a
+  pseudonym store pinned at `max_entries`, where every request allocates a
+  pseudonym and evicts another. Demanding zero loss there would assert capacity
+  the phase is designed to exceed, so the requirement is that the agent sheds
+  *gracefully* — most of the burst still delivered, and nothing lost to anything
+  other than a next hop refusing the message.
+
+Routing errors are classified rather than merely counted. Two are expected from
+what the phases deliberately do: a next hop refusing a message under the burst,
+and an answer arriving for a client the churn phase has just disconnected.
+Anything else fails the run, because it means a route or a peer was lost for a
+reason the run did not cause.
 
 ## What this test found
 
@@ -84,7 +103,14 @@ a locally generated error answer is still an answer.
 The fix rearms the watchdog on entry to `Suspect`, so a lost DWA now closes the
 connection and reconnects. Regression tests are in
 `pkg/core/peer/watchdog_suspect_test.go`, and the soak asserts the agent logs no
-routing errors.
+routing errors it did not provoke.
+
+**"No routes available" hid next-hop backpressure.** Under the burst the only
+upstream peer can refuse a message when its send queue is full. The router
+excludes a peer that refuses and retries, so the surviving error said only that
+no route was left — pointing an operator at a routing misconfiguration when the
+route existed and the peer was healthy. The relay now reports the refusal
+alongside the exhausted-candidates error.
 
 ## Results
 

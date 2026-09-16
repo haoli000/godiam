@@ -129,7 +129,7 @@ func (t AVPType) String() string {
 		"IPFilterRule",
 		"Grouped",
 	}
-	if int(t) < len(names) {
+	if t >= 0 && int(t) < len(names) {
 		return names[t]
 	}
 	return fmt.Sprintf("Unknown(%d)", t)

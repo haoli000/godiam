@@ -72,11 +72,17 @@ BACKEND1_COUNT=${BACKEND1_COUNT:-0}
 BACKEND2_COUNT=$(grep -c "test_app request:" /tmp/server2.log 2>/dev/null || true)
 BACKEND2_COUNT=${BACKEND2_COUNT:-0}
 
-if [ "$BACKEND1_COUNT" -gt 0 ] && [ "$BACKEND1_COUNT" -ge "$BACKEND2_COUNT" ]; then
+# The rule boosts server1 by 200 over the realm route's 100, and the router picks
+# the highest scoring tier outright, so every matching request must land on
+# server1. Accepting "server1 >= server2" would pass roughly half the time even
+# with the boost doing nothing at all, which is how a broken rt_ereg went
+# unnoticed: the extension registered on the incoming path, where the router
+# discards the candidate list, and traffic was simply being split at random.
+if [ "$BACKEND1_COUNT" -gt 0 ] && [ "$BACKEND2_COUNT" -eq 0 ]; then
     REGEX_ROUTED=true
-    log "${GREEN}✓ Boosted peer received more traffic: server1=${BACKEND1_COUNT}, server2=${BACKEND2_COUNT}${NC}"
+    log "${GREEN}✓ Boosted peer received all traffic: server1=${BACKEND1_COUNT}, server2=${BACKEND2_COUNT}${NC}"
 elif [ "$BACKEND1_COUNT" -gt 0 ]; then
-    log "${YELLOW}⚠ server1=${BACKEND1_COUNT}, server2=${BACKEND2_COUNT}${NC}"
+    log "${RED}✗ Boost did not win outright: server1=${BACKEND1_COUNT}, server2=${BACKEND2_COUNT}${NC}"
 else
     log "${RED}✗ Boosted peer received no requests (server1=${BACKEND1_COUNT})${NC}"
 fi
@@ -115,9 +121,6 @@ log ""
 if [ $SCORE -eq $TOTAL ]; then
     log "${GREEN}✓ rt_ereg test PASSED!${NC}"
     log "${GREEN}✓ Regex-based routing working correctly${NC}"
-    exit 0
-elif [ $SCORE -ge 3 ]; then
-    log "${YELLOW}⚠ rt_ereg test PARTIALLY PASSED (${SCORE}/${TOTAL})${NC}"
     exit 0
 else
     log "${RED}✗ rt_ereg test FAILED (${SCORE}/${TOTAL})${NC}"

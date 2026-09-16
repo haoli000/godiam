@@ -1,17 +1,27 @@
 # Integration test Dockerfile: freeDiameter (left side) + godiam (right side)
 # Tests interoperability between freeDiameter and godiam DRA implementations
 
-FROM golang:1.23-bookworm AS godiam-builder
+# haoli1/freediameter is published for linux/amd64 only. Declared as an ARG
+# rather than a constant because BuildKit rejects a literal --platform.
+ARG RUNTIME_PLATFORM=linux/amd64
+
+# The freeDiameter runtime image below is published for linux/amd64 only, so the
+# godiam binaries must be amd64 as well. Without pinning, the builder stage
+# resolves to the host architecture and an arm64 binary lands in an amd64 image,
+# where it fails to exec with a misleading "No such file or directory". Build on
+# the native platform and cross-compile rather than emulating the Go toolchain.
+FROM --platform=$BUILDPLATFORM golang:1.23-bookworm AS godiam-builder
 
 # Build godiam
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY . .
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 RUN go build -o diameterd ./cmd/diameterd
 RUN go build -o diameterc ./cmd/diameterc
 
-# Runtime image with both freeDiameter and godiam
-FROM haoli1/freediameter:latest
+# Runtime image with both freeDiameter and godiam.
+FROM --platform=$RUNTIME_PLATFORM haoli1/freediameter:latest
 
 # Install runtime dependencies for godiam
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -73,6 +73,12 @@ func Parse(data []byte, secret string) (*Packet, error) {
 		Secret:     secret,
 	}
 	length := binary.BigEndian.Uint16(data[2:4])
+	if int(length) < 20 {
+		// RFC 2865 3: Length covers the 20-byte header, so anything shorter is
+		// malformed. Without this the attribute slice below runs backwards and
+		// panics on input an attacker controls.
+		return nil, fmt.Errorf("packet length %d is shorter than the 20-byte header", length)
+	}
 	if int(length) > len(data) {
 		return nil, fmt.Errorf("packet length mismatch: header says %d, got %d", length, len(data))
 	}
@@ -80,11 +86,18 @@ func Parse(data []byte, secret string) (*Packet, error) {
 	copy(p.Authenticator[:], data[4:20])
 
 	attrData := data[20:length]
-	for len(attrData) >= 2 {
+	for len(attrData) > 0 {
+		// RFC 2865 5 requires a packet with a malformed attribute to be
+		// discarded. Breaking out instead left the packet valid but carrying a
+		// truncated attribute list, so a sender could craft one packet that
+		// this gateway and the RADIUS server behind it read differently.
+		if len(attrData) < 2 {
+			return nil, fmt.Errorf("trailing %d byte(s) are too short for an attribute", len(attrData))
+		}
 		aType := attrData[0]
 		aLen := attrData[1]
 		if int(aLen) < 2 || int(aLen) > len(attrData) {
-			break
+			return nil, fmt.Errorf("attribute %d has invalid length %d", aType, aLen)
 		}
 		p.Attributes = append(p.Attributes, Attribute{
 			Type:  aType,

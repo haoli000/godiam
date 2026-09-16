@@ -119,17 +119,18 @@ func (e *dbgMsgDumps) dumpMessage(p *peer.Peer, msg *message.Message, format mes
 	}
 }
 
-func (e *dbgMsgDumps) getDumpMode(dumpFlags uint32) message.DumpFormat {
-	if dumpFlags&hkErrorsCompact != 0 {
+// Both callers pass the send/receive group, so the bits tested here have to be
+// that group's. Testing the hkErrors* bits instead matched nothing -- the two
+// groups do not overlap -- and silently forced every dump to tree format,
+// ignoring a configured compact or full level.
+func (e *dbgMsgDumps) sndrcvDumpMode(dumpFlags uint32) message.DumpFormat {
+	if dumpFlags&hkSndrcvCompact != 0 {
 		return message.DumpSummary
 	}
-	if dumpFlags&hkErrorsFull != 0 {
+	if dumpFlags&hkSndrcvFull != 0 {
 		return message.DumpFull
 	}
-	if dumpFlags&hkErrorsTree != 0 {
-		return message.DumpTree
-	}
-	return message.DumpTree // Default
+	return message.DumpTree
 }
 
 func (e *dbgMsgDumps) handleIncoming(p *peer.Peer, msg *message.Message, candidates []routing.Route) ([]routing.Route, error) {
@@ -137,7 +138,7 @@ func (e *dbgMsgDumps) handleIncoming(p *peer.Peer, msg *message.Message, candida
 		return candidates, nil
 	}
 
-	mode := e.getDumpMode(e.dumpLevel & (hkSndrcvCompact | hkSndrcvFull | hkSndrcvTree))
+	mode := e.sndrcvDumpMode(e.dumpLevel & (hkSndrcvCompact | hkSndrcvFull | hkSndrcvTree))
 	e.dumpMessage(p, msg, mode, "RCV")
 
 	return candidates, nil
@@ -148,7 +149,7 @@ func (e *dbgMsgDumps) handleOutgoing(msg *message.Message, candidates []routing.
 		return candidates, nil
 	}
 
-	mode := e.getDumpMode(e.dumpLevel & (hkSndrcvCompact | hkSndrcvFull | hkSndrcvTree))
+	mode := e.sndrcvDumpMode(e.dumpLevel & (hkSndrcvCompact | hkSndrcvFull | hkSndrcvTree))
 	e.dumpMessage(nil, msg, mode, "SND")
 
 	return candidates, nil

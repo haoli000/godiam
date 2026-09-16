@@ -480,7 +480,9 @@ if [ "$CHECKS_PASSED" -eq "$CHECKS_TOTAL" ]; then
     exit 0
 elif [ "$CHECKS_PASSED" -ge $((CHECKS_TOTAL * 3 / 4)) ]; then
     echo -e "${YELLOW}⚠ Endurance test PARTIALLY PASSED (${CHECKS_PASSED}/${CHECKS_TOTAL})${NC}"
-    exit 0
+    # A partial pass is a failure: exiting 0 here once let a
+    # completely non-functional extension report green for months.
+    exit 1
 else
     echo -e "${RED}✗ Endurance test FAILED (${CHECKS_PASSED}/${CHECKS_TOTAL})${NC}"
     exit 1

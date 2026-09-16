@@ -80,6 +80,18 @@ func handleCx(p *peer.Peer, msg *message.Message) error {
 	}
 }
 
+// Every Diameter answer must carry Origin-Host and Origin-Realm (RFC 6733
+// 6.2), and a strict peer rejects one that does not. NewAnswer deliberately
+// leaves them to the handler, so the bare answers below have to stamp them.
+func addAnswerIdentity(ans, req *message.Message) {
+	if sessionID, ok := req.GetSessionID(); ok {
+		ans.AddAVP(message.NewUTF8StringAVP(types.AVPCodeSessionID, types.AVPFlagMandatory, sessionID))
+	}
+	localCfg := peer.GetLocalConfig()
+	ans.AddAVP(message.NewDiameterIdentityAVP(types.AVPCodeOriginHost, types.AVPFlagMandatory, localCfg.DiameterIdentity))
+	ans.AddAVP(message.NewDiameterIdentityAVP(types.AVPCodeOriginRealm, types.AVPFlagMandatory, localCfg.Realm))
+}
+
 func handleUAR(p *peer.Peer, msg *message.Message) error {
 	log.Printf("UAR received from %s", p.DiameterID())
 
@@ -118,6 +130,7 @@ func handleMAR(p *peer.Peer, msg *message.Message) error {
 	log.Printf("MAR received from %s", p.DiameterID())
 	ans := message.NewAnswer(msg)
 	ans.SetResultCode(types.ResultSuccess)
+	addAnswerIdentity(ans, msg)
 	return p.Send(ans)
 }
 
@@ -125,6 +138,7 @@ func handleSAR(p *peer.Peer, msg *message.Message) error {
 	log.Printf("SAR received from %s", p.DiameterID())
 	ans := message.NewAnswer(msg)
 	ans.SetResultCode(types.ResultSuccess)
+	addAnswerIdentity(ans, msg)
 	return p.Send(ans)
 }
 
@@ -132,6 +146,7 @@ func handleLIR(p *peer.Peer, msg *message.Message) error {
 	log.Printf("LIR received from %s", p.DiameterID())
 	ans := message.NewAnswer(msg)
 	ans.SetResultCode(types.ResultSuccess)
+	addAnswerIdentity(ans, msg)
 	return p.Send(ans)
 }
 

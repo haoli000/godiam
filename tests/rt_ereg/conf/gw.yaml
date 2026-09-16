@@ -56,6 +56,6 @@ extensions:
     config:
       rules:
         - avp: "Destination-Realm"
-          pattern: "right\\.side"
+          pattern: "backend\\.realm"
           server: "server1.backend.realm"
           score: 200

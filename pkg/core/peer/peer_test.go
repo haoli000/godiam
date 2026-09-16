@@ -8,7 +8,6 @@ package peer
 import (
 	"bytes"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -562,98 +561,87 @@ func TestHandleStateClosed_EventRConnCER(t *testing.T) {
 // ============================================================================
 
 func TestElectionLocalWins(t *testing.T) {
-	// Test case: local Origin-Host > remote Origin-Host (lexicographically)
-	// Local should win and keep R-connection
+	// RFC 6733 5.6.4: the responder compares the Origin-Host it received with
+	// its own. Local lexicographically succeeds the peer, so a Win-Election
+	// event must be issued, which is what keeps the R connection.
+	p := electionPeer(t, "z-local.example.com", "a-remote.example.com")
 
-	dict := testDict()
-	// "z-local" > "a-remote" lexicographically, so local wins
-	cfg := testConfig("z-local.example.com")
+	p.performElection()
 
-	p := New(cfg, dict)
-	p.diameterID = "a-remote.example.com" // Simulate received from CER
-
-	savedConfig := GetLocalConfig()
-	defer SetLocalConfig(savedConfig)
-
-	SetLocalConfig(LocalConfig{
-		DiameterIdentity: "z-local.example.com",
-		Realm:            "test.realm",
-		VendorID:         0,
-		ProductName:      "TestProduct",
-		OriginStateID:    1,
-		HostIPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	})
-
-	// Manually trigger state machine and check election logic
-	// This is a unit test of the election comparison logic
-
-	localHost := string(p.getEffectiveLocalConfig().DiameterIdentity)
-	peerHost := string(p.diameterID)
-
-	if localHost <= peerHost {
-		t.Errorf("Expected local (%s) > peer (%s)", localHost, peerHost)
-	}
+	assertWonElection(t, p, true)
 }
 
 func TestElectionRemoteWins(t *testing.T) {
-	// Test case: local Origin-Host < remote Origin-Host (lexicographically)
-	// Remote should win, local keeps I-connection
+	// Local precedes the peer, so the peer wins. No event may be issued: the
+	// node waits for the peer's CEA on the I connection instead. Issuing one
+	// here would make both ends keep their own R connection and neither
+	// would ever open.
+	p := electionPeer(t, "a-local.example.com", "z-remote.example.com")
 
-	dict := testDict()
-	// "a-local" < "z-remote" lexicographically, so remote wins
-	cfg := testConfig("a-local.example.com")
+	p.performElection()
 
-	p := New(cfg, dict)
-	p.diameterID = "z-remote.example.com" // Simulate received from CER
-
-	savedConfig := GetLocalConfig()
-	defer SetLocalConfig(savedConfig)
-
-	SetLocalConfig(LocalConfig{
-		DiameterIdentity: "a-local.example.com",
-		Realm:            "test.realm",
-		VendorID:         0,
-		ProductName:      "TestProduct",
-		OriginStateID:    1,
-		HostIPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	})
-
-	localHost := string(p.getEffectiveLocalConfig().DiameterIdentity)
-	peerHost := string(p.diameterID)
-
-	if localHost >= peerHost {
-		t.Errorf("Expected local (%s) < peer (%s)", localHost, peerHost)
-	}
+	assertWonElection(t, p, false)
 }
 
-func TestElectionCaseInsensitive(t *testing.T) {
-	// RFC 6733: ASCII comparison should be case-insensitive
+func TestElectionIsCaseInsensitive(t *testing.T) {
+	// Diameter identities are FQDNs, so the comparison must fold case. These
+	// two identities elect opposite winners depending on whether it does:
+	// by raw ASCII "aaa" (0x61) succeeds "AAB" (0x41) and local would win,
+	// but folded "aaa" precedes "aab" and local must lose. If both ends
+	// disagree on the winner the collision never resolves.
+	p := electionPeer(t, "aaa.example.com", "AAB.example.com")
 
-	dict := testDict()
-	cfg := testConfig("AAA.example.com")
+	p.performElection()
 
-	p := New(cfg, dict)
-	p.diameterID = "aaa.example.com"
+	assertWonElection(t, p, false)
+}
 
-	savedConfig := GetLocalConfig()
-	defer SetLocalConfig(savedConfig)
+func TestElectionIdenticalIdentitiesDoNotWin(t *testing.T) {
+	// A node that has somehow collided with its own identity must not elect
+	// itself the winner; "succeeds" is strict.
+	p := electionPeer(t, "same.example.com", "SAME.example.com")
 
-	SetLocalConfig(LocalConfig{
-		DiameterIdentity: "AAA.example.com",
+	p.performElection()
+
+	assertWonElection(t, p, false)
+}
+
+// electionPeer builds a peer whose local identity and received peer identity
+// are the two sides of an election.
+func electionPeer(t *testing.T, localHost, peerHost string) *Peer {
+	t.Helper()
+
+	p := New(testConfig(localHost), testDict())
+	p.diameterID = types.DiamID(peerHost) // as recorded by processCER
+	p.SetLocalOverride(LocalConfig{
+		DiameterIdentity: types.DiamID(localHost),
 		Realm:            "test.realm",
-		VendorID:         0,
 		ProductName:      "TestProduct",
 		OriginStateID:    1,
 		HostIPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 	})
+	return p
+}
 
-	// Both should be equal when compared case-insensitively
-	localHost := string(p.getEffectiveLocalConfig().DiameterIdentity)
-	peerHost := string(p.diameterID)
+// assertWonElection checks whether performElection issued a Win-Election event.
+func assertWonElection(t *testing.T, p *Peer, want bool) {
+	t.Helper()
 
-	// The comparison in performElection uses strings.ToLower
-	if !strings.EqualFold(localHost, peerHost) {
-		t.Errorf("Expected equal after case normalization: %s vs %s", localHost, peerHost)
+	var got bool
+	select {
+	case ev := <-p.eventChan:
+		if ev.event != EventWinElection {
+			t.Fatalf("event = %v, want EventWinElection or nothing", ev.event)
+		}
+		got = true
+	default:
+	}
+
+	if got != want {
+		if want {
+			t.Fatal("no Win-Election event: the local identity succeeds the peer's, so it must win")
+		}
+		t.Fatal("Win-Election issued although the peer identity succeeds the local one")
 	}
 }
 

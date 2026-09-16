@@ -38,6 +38,12 @@ func DecodeMessage(data []byte) (*Message, error) {
 
 	// Bytes 1-3: Message Length (24-bit)
 	msgLen := int(data[1])<<16 | int(data[2])<<8 | int(data[3])
+	if msgLen < types.DiameterHeaderSize {
+		// RFC 6733 4.1: Message Length covers the header too, so it can never
+		// be shorter than one. Rejecting this is what stops a peer from
+		// slicing the buffer backwards and panicking the process.
+		return nil, fmt.Errorf("message length %d is shorter than the %d-byte header", msgLen, types.DiameterHeaderSize)
+	}
 	if msgLen > len(data) {
 		return nil, fmt.Errorf("message length %d exceeds data length %d", msgLen, len(data))
 	}

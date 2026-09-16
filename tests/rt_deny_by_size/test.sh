@@ -101,7 +101,9 @@ if [ $SCORE -eq $TOTAL ]; then
     exit 0
 elif [ $SCORE -ge 2 ]; then
     log "${YELLOW}⚠ rt_deny_by_size test PARTIALLY PASSED (${SCORE}/${TOTAL})${NC}"
-    exit 0
+    # A partial pass is a failure: exiting 0 here once let a
+    # completely non-functional extension report green for months.
+    exit 1
 else
     log "${RED}✗ rt_deny_by_size test FAILED (${SCORE}/${TOTAL})${NC}"
     log "${RED}✗ Check logs in /tmp/*.log for details${NC}"

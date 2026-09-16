@@ -194,7 +194,7 @@ func (e *deaTopoHide) handleIn(p *peer.Peer, msg *message.Message, candidates []
 		return candidates, nil
 	}
 
-	partner := e.answerPartner(reg, router, msg)
+	partner := e.answerPartner(reg, router, string(p.DiameterID()), msg)
 	if partner == nil || partner.TopologyHiding.Mode == config.TopoHideNone {
 		return candidates, nil
 	}
@@ -253,11 +253,11 @@ func (e *deaTopoHide) handlePostRoute(msg *message.Message, selectedPeer types.D
 // being forwarded to a partner at all, so hiding it would scrub a message that
 // never leaves the operator network, and a Session-Id the partner chooses is
 // not evidence of where the answer is going.
-func (e *deaTopoHide) answerPartner(reg *edge.Registry, router relayOriginer, msg *message.Message) *config.PartnerConfig {
+func (e *deaTopoHide) answerPartner(reg *edge.Registry, router relayOriginer, answeringPeer string, msg *message.Message) *config.PartnerConfig {
 	if router == nil {
 		return nil
 	}
-	origin, ok := router.RelayOrigin(msg.HopByHopID)
+	origin, ok := router.RelayOrigin(answeringPeer, msg.HopByHopID)
 	if !ok {
 		return nil
 	}
@@ -605,9 +605,10 @@ func init() {
 	extension.Register(&deaTopoHide{})
 }
 
-// relayOriginer reports which peer a relayed request came from, given the
-// hop-by-hop ID of the answer that is coming back. It is satisfied by
-// *routing.Router and kept as an interface so tests can supply their own.
+// relayOriginer reports which peer a relayed request came from, given the peer
+// that is answering and the hop-by-hop ID of the answer coming back. Both are
+// needed because a hop-by-hop ID is unique only per connection. It is satisfied
+// by *routing.Router and kept as an interface so tests can supply their own.
 type relayOriginer interface {
-	RelayOrigin(hbhID types.HopByHopID) (string, bool)
+	RelayOrigin(outboundPeer string, hbhID types.HopByHopID) (string, bool)
 }

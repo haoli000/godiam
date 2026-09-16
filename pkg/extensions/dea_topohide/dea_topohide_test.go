@@ -586,7 +586,9 @@ func TestHidingMasksServedInternalRealm(t *testing.T) {
 // fakeRelay stands in for the router's in-flight relay transaction table.
 type fakeRelay map[types.HopByHopID]string
 
-func (f fakeRelay) RelayOrigin(hbhID types.HopByHopID) (string, bool) {
+// The answering peer is ignored: these tests exercise the hiding decision, not
+// the router's key uniqueness, which router_test.go covers.
+func (f fakeRelay) RelayOrigin(_ string, hbhID types.HopByHopID) (string, bool) {
 	origin, ok := f[hbhID]
 	return origin, ok
 }

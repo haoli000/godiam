@@ -204,6 +204,8 @@ See [endurance/README.md](endurance/README.md) for details.
 | rt_redirect      | godiam only           | Test redirect caching             |
 | Endurance        | godiam only           | DRA resilience & failure recovery |
 | DEA Integration  | godiam only           | Edge screening, hiding & limiting |
+| DEA Performance  | godiam only           | Cost of edge controls vs a relay  |
+| DEA Soak         | godiam only           | Long-run CPU, RSS & goroutines    |
 
 ## Running All Integration Tests
 
